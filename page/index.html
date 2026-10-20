@@ -1,0 +1,648 @@
+<title>Club Radar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+  /* Layout: one narrow column — header, "Act now" deadline list, upcoming events by day, collapsed Later; Chats panel slides over the list. */
+  :root {
+    --bg: #f5f6f9;
+    --surface: #ffffff;
+    --fg: #161a2b;
+    --muted: #5d6479;
+    --line: #dfe2ec;
+    --accent: #2f3ba2;
+    --accent-soft: #e6e8f8;
+    --red: #c8312b; --red-soft: #fbe7e5;
+    --amber: #a8640a; --amber-soft: #fbefd9;
+    --grey: #6a7085; --grey-soft: #eceef3;
+    --mine: #2f3ba2; --shared: #6a7085;
+    --font-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+    --font-body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #11131c; --surface: #191c28; --fg: #e8eaf2; --muted: #9aa0b5; --line: #2a2e3e;
+      --accent: #8f9bff; --accent-soft: #252a4d;
+      --red: #ff7a70; --red-soft: #3a1d1d; --amber: #f2b552; --amber-soft: #382a12;
+      --grey: #a3a8ba; --grey-soft: #252836; --mine: #8f9bff; --shared: #a3a8ba;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #11131c; --surface: #191c28; --fg: #e8eaf2; --muted: #9aa0b5; --line: #2a2e3e;
+    --accent: #8f9bff; --accent-soft: #252a4d;
+    --red: #ff7a70; --red-soft: #3a1d1d; --amber: #f2b552; --amber-soft: #382a12;
+    --grey: #a3a8ba; --grey-soft: #252836; --mine: #8f9bff; --shared: #a3a8ba;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.45;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 20px 48px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 28px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+  h1 { font-family: var(--font-display); font-weight: 800; font-size: 30px; letter-spacing: -0.02em; margin: 0; flex: 1 1 auto; }
+  h1 small { display: block; font-family: var(--font-body); font-weight: 400; font-size: 13px; letter-spacing: 0; color: var(--muted); }
+  .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: var(--grey-soft); color: var(--grey); white-space: nowrap; }
+  .pill.amber { background: var(--amber-soft); color: var(--amber); }
+  .pill.red { background: var(--red-soft); color: var(--red); }
+  button, .btn {
+    font: 600 14px var(--font-body); border-radius: 8px; padding: 8px 14px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface); color: var(--fg); text-decoration: none; display: inline-flex; gap: 6px; align-items: center;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button:focus-visible, .btn:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .note { font-size: 13px; color: var(--muted); }
+  .banner { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; font-size: 14px; }
+  .banner.error { border-color: var(--red); color: var(--red); }
+  .progress { height: 4px; background: var(--grey-soft); border-radius: 4px; overflow: hidden; }
+  .progress > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  section { display: grid; gap: 10px; }
+  h2 { font-family: var(--font-display); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; display: flex; gap: 8px; align-items: baseline; }
+  h2 .count { font-family: var(--font-data); letter-spacing: 0; }
+  .list { display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 4px 14px; padding: 12px 14px; align-items: start; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row.missed { opacity: .55; }
+  .due { font-family: var(--font-data); font-weight: 600; font-size: 13px; text-align: center; padding: 6px 4px; border-radius: 8px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .due small { display: block; font-weight: 500; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; opacity: .8; }
+  .due.red { background: var(--red-soft); color: var(--red); }
+  .due.amber { background: var(--amber-soft); color: var(--amber); }
+  .due.grey, .due.missed { background: var(--grey-soft); color: var(--grey); }
+  .title { font-weight: 600; overflow-wrap: anywhere; }
+  .meta { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+  .tag { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 1px 7px; border-radius: 6px; border: 1px solid currentColor; }
+  .tag.mine { color: var(--mine); }
+  .verified { color: var(--accent); font-weight: 600; }
+  .warn { font-size: 13px; color: var(--amber); margin-top: 2px; }
+  .btn.cg { border-color: var(--accent); color: var(--accent); }
+  .tag.shared { color: var(--shared); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .actions button, .actions .btn { padding: 4px 10px; font-size: 13px; font-weight: 500; }
+  details.src { grid-column: 2 / -1; font-size: 13px; color: var(--muted); }
+  details.src summary { cursor: pointer; width: fit-content; }
+  details.src blockquote { margin: 6px 0 0; padding: 8px 10px; background: var(--bg); border-radius: 8px; color: var(--fg); overflow-wrap: anywhere; }
+  .day { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 14px; padding: 12px 14px; }
+  .day + .day { border-top: 1px solid var(--line); }
+  .dayname { font-family: var(--font-data); font-size: 13px; font-weight: 600; color: var(--muted); padding-top: 2px; }
+  .dayname b { display: block; font-family: var(--font-display); font-size: 22px; color: var(--fg); font-weight: 800; line-height: 1; }
+  .events { display: grid; gap: 10px; }
+  .event { display: grid; gap: 2px; }
+  details.later > summary { cursor: pointer; list-style: none; }
+  details.later > summary::-webkit-details-marker { display: none; }
+  details.later > summary h2::before { content: "▸"; display: inline-block; transition: transform .15s; }
+  details.later[open] > summary h2::before { transform: rotate(90deg); }
+  details.later > .list { margin-top: 10px; }
+  .empty { padding: 28px 18px; text-align: center; color: var(--muted); display: grid; gap: 12px; justify-items: center; }
+  .empty strong { font-family: var(--font-display); font-size: 20px; color: var(--fg); }
+  #chats, #clubs { display: grid; gap: 12px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 12px; margin-bottom: -1px; }
+  .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+  .club-row { display: grid; grid-template-columns: 28px auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 14px; }
+  .club-row + .club-row { border-top: 1px solid var(--line); }
+  .club-row .rank { font-family: var(--font-data); font-weight: 600; color: var(--muted); text-align: right; }
+  .club-row.off .name { color: var(--muted); text-decoration: line-through; }
+  .club-row .name small { display: block; color: var(--muted); font-size: 12px; }
+  .club-row .move { display: flex; gap: 4px; }
+  .club-row .move button { padding: 2px 8px; font-weight: 500; }
+  .chat-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .chat-tools input[type=search] { flex: 1 1 200px; min-width: 0; }
+  input[type=search], input[type=text] { font: 14px var(--font-body); padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+  .chat-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 220px); gap: 10px; align-items: center; padding: 8px 14px; }
+  .chat-row + .chat-row { border-top: 1px solid var(--line); }
+  .chat-row .name { overflow-wrap: anywhere; font-size: 14px; }
+  .chat-row input[type=text] { width: 100%; }
+  .chat-row.off .name { color: var(--muted); }
+  .badge { font-size: 11px; color: var(--amber); font-weight: 600; margin-left: 6px; }
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 10px; display: flex; gap: 12px; align-items: center; font-size: 14px; max-width: calc(100% - 32px); }
+  .toast button { background: transparent; color: var(--bg); border-color: var(--bg); padding: 2px 10px; }
+  @media (max-width: 520px) {
+    .row { grid-template-columns: 78px minmax(0, 1fr); }
+    .row .actions { grid-column: 2; justify-content: flex-start; }
+    .day { grid-template-columns: 64px minmax(0, 1fr); }
+    .chat-row { grid-template-columns: auto minmax(0, 1fr); }
+    .chat-row input[type=text] { grid-column: 2; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Club Radar<small>Deadlines and events from your WhatsApp groups</small></h1>
+    <div class="tools">
+      <span id="updated" class="pill">Not run yet</span>
+      <button id="refreshBtn" type="button" class="primary">Refresh now</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button type="button" role="tab" id="tab-radar" aria-selected="true">Radar</button>
+    <button type="button" role="tab" id="tab-clubs" aria-selected="false">Clubs</button>
+    <button type="button" role="tab" id="tab-chats" aria-selected="false">Chats</button>
+  </nav>
+
+  <div id="hostNote" class="note" hidden>Waiting for the WhatsApp connector. Open this page in the Claude app on your Mac; it connects automatically.</div>
+  <div id="banner" class="banner" hidden></div>
+  <div id="stoppedNote" class="banner error" hidden></div>
+  <div id="progressWrap" hidden>
+    <div class="progress"><i id="progressBar"></i></div>
+    <div id="progressText" class="note"></div>
+  </div>
+
+  <section id="chats" hidden>
+    <h2>Chats <span id="chatsCount" class="count"></span></h2>
+    <p class="note" id="chatsHelp">Tick the groups where events get announced. Give each club's groups the same club name; leave it blank for class chats. Events from clubs named here are tagged <span class="tag mine">Mine</span>.</p>
+    <div class="chat-tools">
+      <input id="chatSearch" type="search" placeholder="Filter groups" aria-label="Filter groups">
+      <button id="chatsCancel" type="button">Cancel</button>
+      <button id="chatsSave" type="button" class="primary">Save</button>
+    </div>
+    <div id="chatList" class="list"></div>
+  </section>
+
+  <section id="clubs" hidden>
+    <h2>Clubs <span id="clubsCount" class="count"></span></h2>
+    <p class="note">Put the clubs you care about most at the top. Within each urgency band, and within each day, their items come first. Untick a club to hide its items from the radar.</p>
+    <div id="clubList" class="list"></div>
+  </section>
+
+  <main id="main" class="wrap" style="gap:28px">
+    <section>
+      <h2>Act now <span id="actCount" class="count"></span></h2>
+      <div id="actList" class="list"></div>
+    </section>
+    <section>
+      <h2>Upcoming events <span class="count note">next 60 days</span></h2>
+      <div id="dayList" class="list"></div>
+    </section>
+    <details class="later" id="laterWrap" hidden>
+      <summary><h2>Later <span id="laterCount" class="count"></span></h2></summary>
+      <div id="laterList" class="list"></div>
+    </details>
+  </main>
+</div>
+<div id="toast" class="toast" hidden role="status"><span id="toastText"></span><button id="toastUndo" type="button">Undo</button></div>
+
+<script src="core.js"></script>
+<script src="prompts.js"></script>
+<script>
+(function () {
+  "use strict";
+  const C = window.RadarCore, P = window.RadarPrompts;
+  const HOST = "host:whatsapp";
+  const BATCH = 150;
+  const $ = (id) => document.getElementById(id);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  const state = { items: new Map(), chats: null, status: null, db: null, mcp: null, sample: null, host: false, busy: false, draftChats: null, setupMode: false, prefs: { order: [], hidden: [] }, tab: "radar" };
+
+  // ---------- formatting ----------
+  const fmtDay = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const fmtTime = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+  const fmtMonth = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" });
+  const isDateOnly = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
+
+  function countdown(item, urg) {
+    if (urg === "grey" && (item.approx || !item.when)) return ["TBD", "date"];
+    const ms = C.dueTime(item) - Date.now();
+    const abs = Math.abs(ms), d = Math.floor(abs / 864e5), h = Math.floor(abs / 36e5) % 24, m = Math.floor(abs / 6e4) % 60;
+    const txt = d >= 1 ? `${d}d ${String(h).padStart(2, "0")}h` : `${h}h ${String(m).padStart(2, "0")}m`;
+    return ms < 0 ? [txt, "ago"] : [txt, item.beforeEvent ? "to event" : "left"];
+  }
+  function whenText(item) {
+    if (!item.when) return "Date not announced";
+    const t = C.dueTime(item);
+    const day = fmtDay.format(t);
+    if (item.beforeEvent) return isDateOnly(item.when) ? `Event day: ${day}` : `Event starts ${day}, ${fmtTime.format(t)}`;
+    if (item.deadlineFrom === "campusgroups") return `Sign-up closes ${day}, ${fmtTime.format(t)}`;
+    if (isDateOnly(item.when)) return item.kind === "deadline" ? `${day}, end of day` : day;
+    return `${day}, ${fmtTime.format(t)}`;
+  }
+  function el(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v === true ? "" : v);
+    }
+    for (const k of kids.flat()) if (k != null && k !== false) n.append(k.nodeType ? k : document.createTextNode(String(k)));
+    return n;
+  }
+  function tagFor(mine) { return el("span", { class: "tag " + (mine ? "mine" : "shared") }, mine ? "Mine" : "Shared"); }
+  function sourceDetails(item) {
+    const s = item.source || {};
+    const ts = Date.parse(String(s.ts || "").replace(" ", "T"));
+    return el("details", { class: "src" },
+      el("summary", null, `From ${s.chatName || "a group"}${Number.isNaN(ts) ? "" : " · " + fmtDay.format(ts)}`),
+      el("blockquote", null, s.excerpt || "(no text)"));
+  }
+
+  // ---------- render ----------
+  function render() {
+    const now = new Date();
+    const v = C.buildView([...state.items.values()], state.chats || {}, now, state.prefs);
+    if (state.tab === "clubs") renderClubs();
+
+    const act = $("actList"); act.replaceChildren();
+    $("actCount").textContent = v.actNow.length ? String(v.actNow.length) : "";
+    if (!v.actNow.length) act.append(emptyBlock("act"));
+    for (const r of v.actNow) {
+      const [big, small] = countdown(r.item, r.urgency);
+      const forEvent = r.item.eventTitle ? `for ${r.item.eventTitle}${r.item.eventWhen ? " (" + fmtDay.format(C.dueTime({ kind: "event", when: r.item.eventWhen })) + ")" : ""}` : null;
+      act.append(el("div", { class: "row" + (r.urgency === "missed" ? " missed" : "") },
+        el("div", { class: "due " + r.urgency, title: whenText(r.item) }, big, el("small", null, r.urgency === "missed" ? "missed" : small)),
+        el("div", null,
+          el("div", { class: "title" }, r.item.title),
+          el("div", { class: "meta" }, tagFor(r.mine), el("span", null, r.item.club), el("span", null, whenText(r.item)), forEvent && el("span", null, forEvent),
+            r.item.deadlineFrom === "campusgroups" && el("span", { class: "verified" }, "✓ from CampusGroups" + (r.item.spotsLeft != null ? ` · ${r.item.spotsLeft} spot${r.item.spotsLeft === 1 ? "" : "s"} left` : ""))),
+          deadlineWarning(r.item) && el("div", { class: "warn" }, deadlineWarning(r.item))),
+        rowActions(r.item),
+        sourceDetails(r.item)));
+    }
+
+    const days = $("dayList"); days.replaceChildren();
+    if (!v.days.length) days.append(emptyBlock("days"));
+    for (const d of v.days) {
+      const t = C.dueTime({ kind: "event", when: d.date });
+      days.append(el("div", { class: "day" },
+        el("div", { class: "dayname" }, el("b", null, new Date(t).getDate()), fmtDay.format(t).replace(/\s*\d+$/, "")),
+        el("div", { class: "events" }, d.items.map(eventBlock))));
+    }
+
+    const later = $("laterList"); later.replaceChildren();
+    const laterN = v.later.reduce((n, m) => n + m.items.length, 0);
+    $("laterWrap").hidden = !laterN;
+    $("laterCount").textContent = laterN ? String(laterN) : "";
+    for (const m of v.later) {
+      const label = m.month === "TBD" ? "Date TBD" : fmtMonth.format(C.dueTime({ kind: "event", when: m.month + "-01" }));
+      later.append(el("div", { class: "day" },
+        el("div", { class: "dayname" }, label),
+        el("div", { class: "events" }, m.items.map(eventBlock))));
+    }
+
+    const st = C.staleness(state.status && state.status.lastRunAt, now);
+    const pill = $("updated");
+    pill.className = "pill" + (st === "amber" ? " amber" : st === "red" ? " red" : "");
+    const stopped = state.status && state.status.inProgress && !state.busy;
+    $("stoppedNote").hidden = !stopped;
+    if (stopped) $("stoppedNote").textContent = `The last check stopped partway — messages after ${fmtDay.format(Date.parse(String(state.status.lastScanTs || "").replace(" ", "T")) || Date.now())} haven't been read yet. Click Refresh now to finish.`;
+    pill.textContent = st === "never" ? "Not run yet" : "Updated " + ago(state.status.lastRunAt) + (state.status.lastRunBy === "morning" ? " · morning run" : "");
+  }
+  function eventBlock(r) {
+    return el("div", { class: "event" },
+      el("div", { class: "title" }, r.item.title),
+      el("div", { class: "meta" }, tagFor(r.mine), el("span", null, r.item.club),
+        r.item.when && !isDateOnly(r.item.when) && el("span", null, fmtTime.format(C.dueTime(r.item))),
+        linkButtons(r.item, "Details ↗"),
+        el("button", { type: "button", onclick: () => dismiss(r.item.id) }, "Hide")),
+      sourceDetails(r.item));
+  }
+  // The posted date may only be the event's day; the real sign-up cutoff can be earlier.
+  function deadlineWarning(item) {
+    if (item.deadlineFrom === "campusgroups" || item.approx || !item.when) return null;
+    if (item.beforeEvent) return "No sign-up deadline was posted. It may close before the event: sign up early" + (item.cgLink ? " or check CampusGroups." : ".");
+    if (item.eventWhen && C.localDate(C.dueTime(item)) === C.localDate(C.dueTime({ kind: "event", when: item.eventWhen }))) return "Deadline posted as the event's day. Sign-up may close sooner" + (item.cgLink ? ": check CampusGroups." : ".");
+    return null;
+  }
+  function linkButtons(item, label) {
+    return [
+      item.cgLink && el("a", { class: "btn cg", href: item.cgLink, target: "_blank", rel: "noopener" }, "CampusGroups ↗"),
+      item.link && item.link !== item.cgLink && el("a", { class: "btn", href: item.link, target: "_blank", rel: "noopener" }, label),
+    ];
+  }
+  function rowActions(item) {
+    return el("div", { class: "actions" },
+      linkButtons(item, "Open link ↗"),
+      el("button", { type: "button", onclick: () => dismiss(item.id) }, "Done"));
+  }
+  function emptyBlock(which) {
+    if (!state.chats) {
+      return which === "act"
+        ? el("div", { class: "empty" }, el("strong", null, "Set up your radar"),
+            el("span", null, "Club Radar reads your WhatsApp groups on this Mac, picks out ticket sales, sign-ups and deposits, and lists them here with a countdown."),
+            canRun() ? el("button", { type: "button", class: "primary", onclick: startSetup }, "Set up") : el("span", { class: "note" }, "Open this page in the Claude app on your Mac to set it up."))
+        : el("div", { class: "empty" }, "Events appear here after the first scan.");
+    }
+    return el("div", { class: "empty" }, which === "act" ? "Nothing to act on right now." : "No events in the next 60 days.");
+  }
+  function ago(iso) {
+    const s = (Date.now() - Date.parse(iso)) / 1000;
+    if (s < 90) return "just now";
+    if (s < 5400) return Math.round(s / 60) + " min ago";
+    if (s < 86400 * 1.5) return Math.round(s / 3600) + " h ago";
+    return Math.round(s / 86400) + " days ago";
+  }
+
+  // ---------- messages ----------
+  let bannerTimer = null;
+  function banner(text, isError) {
+    const b = $("banner");
+    b.hidden = !text; b.textContent = text || ""; b.className = "banner" + (isError ? " error" : "");
+    clearTimeout(bannerTimer);
+    if (text && !isError) bannerTimer = setTimeout(() => (b.hidden = true), 8000);
+  }
+  function progress(frac, text) {
+    $("progressWrap").hidden = frac == null;
+    if (frac != null) { $("progressBar").style.width = Math.round(frac * 100) + "%"; $("progressText").textContent = text; }
+  }
+  function explain(e) {
+    switch (e && e.code) {
+      case "server_not_connected": return "WhatsApp isn't reachable. Open this page in the Claude app on your Mac and make sure the WhatsApp connector is running.";
+      case "not_in_manifest": return "This page isn't allowed to read WhatsApp. Allow WhatsApp in the page's permissions and try again.";
+      case "approval_required": case "cancelled": return "Refresh needs your approval to read WhatsApp. Click Refresh now again and allow it.";
+      case "tool_error": return "WhatsApp returned an error: " + (e.message || "unknown");
+      case "rate_limited": return "Claude is busy right now. Progress so far is saved; try Refresh again in a few minutes.";
+      case "not_granted": return "This page needs permission to ask Claude. Allow it in the page's permissions and try again.";
+      default: return "Refresh stopped: " + ((e && (e.message || e.code)) || "unknown error") + ". Progress so far is saved.";
+    }
+  }
+
+  // ---------- data ----------
+  function unwrap(res) {
+    let p = res && (res.payload !== undefined ? res.payload : res);
+    if (p && !Array.isArray(p) && p.result !== undefined && Object.keys(p).length === 1) p = p.result;
+    if (typeof p === "string") { try { p = JSON.parse(p); } catch (_) {} }
+    return p;
+  }
+  const call = async (tool, input) => unwrap(await state.mcp.callTool(HOST, tool, input || {}));
+  const pad = (n) => String(n).padStart(2, "0");
+  function sqlTs(ms) {
+    const d = new Date(ms);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  async function dismiss(id) {
+    if (!state.db) return;
+    try {
+      await state.db.doc("items/" + id).update({ dismissed: true });
+      toast("Hidden.", async () => { await state.db.doc("items/" + id).update({ dismissed: false }); });
+    } catch (e) { banner("Couldn't hide that item: " + (e.message || e.code), true); }
+  }
+  let toastTimer = null;
+  function toast(text, undo) {
+    $("toastText").textContent = text; $("toast").hidden = false;
+    $("toastUndo").onclick = async () => { $("toast").hidden = true; try { await undo(); } catch (_) {} };
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => ($("toast").hidden = true), 6000);
+  }
+
+  async function syncGroups() {
+    const groups = await call("list_groups");
+    const chats = { ...(state.chats || {}) };
+    let added = 0;
+    for (const g of groups || []) {
+      if (!chats[g.jid]) { chats[g.jid] = { name: g.name || g.jid, include: true, club: null, review: true }; added++; }
+      else if (g.name && chats[g.jid].name !== g.name) chats[g.jid] = { ...chats[g.jid], name: g.name };
+    }
+    return { chats, added, groups: groups || [] };
+  }
+
+  async function refresh() {
+    if (state.busy || !canRun() || !state.chats) return;
+    state.busy = true; $("refreshBtn").disabled = true; banner("");
+    const status = { ...(state.status || {}) };
+    try {
+      progress(0.02, "Checking your groups…");
+      const { chats, added } = await syncGroups();
+      if (added) { await state.db.doc("config/chats").set({ chats }); state.chats = chats; }
+      const jids = Object.entries(state.chats).filter(([, c]) => c.include).map(([j]) => j);
+      if (!jids.length) { banner("No groups are ticked. Open Chats and tick the groups to watch.", true); return; }
+
+      let after = status.lastScanTs || sqlTs(Date.now() - 30 * 864e5);
+      status.inProgress = true;
+      await state.db.doc("meta/status").set(status);
+      const msgs = [];
+      for (;;) {
+        progress(0.05, `Reading messages… ${msgs.length}`);
+        const page = await call("list_group_messages", { after, chat_jids: jids, limit: 500 });
+        msgs.push(...(page.messages || []));
+        if (!page.next_after) break;
+        after = page.next_after;
+      }
+      const useful = msgs.filter((m) => String(m.text || "").trim().length >= 12);
+      const clubs = [...new Set(Object.values(state.chats).filter((c) => c.include && c.club).map((c) => c.club))];
+      const batches = [];
+      for (let i = 0; i < useful.length; i += BATCH) batches.push(useful.slice(i, i + BATCH));
+
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        progress(0.1 + 0.9 * (i / batches.length), `Reading batch ${i + 1} of ${batches.length} with Claude…`);
+        const candidates = await triageBatch(batch);
+        let res = null;
+        if (candidates.length) {
+          const openItems = C.openItems([...state.items.values()], new Date());
+          const prompt = P.extraction({ messages: candidates, clubs, openItems, tz, today: C.localDate(Date.now()) });
+          res = await state.sample.json(prompt, { modelTier: "default", cache: false });
+        }
+        const msgIndex = Object.fromEntries(batch.map((m) => [m.id, m]));
+        const incoming = ((res && res.items) || []).map((raw) => C.normalizeExtraction(raw, { msgIndex })).filter(Boolean);
+        const { upserts } = C.mergeItems([...state.items.values()], incoming, new Date().toISOString());
+        for (const u of upserts) { await state.db.doc("items/" + u.id).set(u); state.items.set(u.id, u); }
+        status.lastScanTs = C.safeResumeTs(batch, status.lastScanTs, i === batches.length - 1);
+        await state.db.doc("meta/status").set(status);
+        render();
+      }
+      if (msgs.length) status.lastScanTs = msgs[msgs.length - 1].ts;
+      status.lastRunAt = new Date().toISOString();
+      status.lastRunBy = "page";
+      status.inProgress = false;
+      await state.db.doc("meta/status").set(status);
+      state.status = status;
+      banner(`Checked ${msgs.length} messages from ${jids.length} groups.` + (added ? ` ${added} new group${added > 1 ? "s" : ""} added — review them in Chats.` : ""));
+    } catch (e) {
+      banner(explain(e), true);
+    } finally {
+      state.busy = false; setHost(state.host); progress(null); render();
+    }
+  }
+
+  // Quick-tier pass so the default tier only reads messages that might matter.
+  // Any failure falls back to the whole batch: a missed deadline costs more than tokens.
+  async function triageBatch(batch) {
+    try {
+      const res = await state.sample.json(P.triage({ messages: batch }), { modelTier: "quick", cache: false });
+      if (!res || !Array.isArray(res.ids)) return batch;
+      const keep = new Set(res.ids.map(String));
+      return batch.filter((m) => keep.has(String(m.id)));
+    } catch (e) {
+      if (e && e.code === "not_granted") throw e;
+      return batch;
+    }
+  }
+
+  // ---------- chats panel ----------
+  async function startSetup() {
+    if (state.busy || !canRun()) return;
+    state.busy = true; $("refreshBtn").disabled = true; banner("");
+    try {
+      progress(0.1, "Loading your groups…");
+      const { chats, groups } = await syncGroups();
+      const CHUNK = 80;
+      for (let i = 0; i < groups.length; i += CHUNK) {
+        progress(0.2 + 0.8 * (i / groups.length), `Sorting groups with Claude… ${i}/${groups.length}`);
+        const res = await state.sample.json(P.suggestChats({ groups: groups.slice(i, i + CHUNK) }), { modelTier: "quick" });
+        for (const s of (res && res.chats) || []) {
+          if (chats[s.jid]) chats[s.jid] = { ...chats[s.jid], include: !!s.include, club: s.club || null, review: false };
+        }
+      }
+      state.setupMode = true;
+      openChats(chats);
+    } catch (e) {
+      banner(explain(e), true);
+    } finally { state.busy = false; setHost(state.host); progress(null); }
+  }
+  function openChats(chats) {
+    state.draftChats = JSON.parse(JSON.stringify(chats || state.chats || {}));
+    $("chatsSave").textContent = state.setupMode ? "Save and scan" : "Save";
+    $("chatsHelp").hidden = false;
+    showTab("chats");
+    renderChats();
+  }
+  function closeChats() { state.setupMode = false; showTab("radar"); }
+
+  // ---------- tabs ----------
+  function showTab(name) {
+    state.tab = name;
+    $("main").hidden = name !== "radar";
+    $("clubs").hidden = name !== "clubs";
+    $("chats").hidden = name !== "chats";
+    for (const t of ["radar", "clubs", "chats"]) $("tab-" + t).setAttribute("aria-selected", String(t === name));
+    if (name === "clubs") renderClubs();
+  }
+
+  // ---------- clubs panel ----------
+  function renderClubs() {
+    const list = C.clubList([...state.items.values()], state.chats || {}, state.prefs, new Date());
+    $("clubsCount").textContent = list.length ? String(list.length) : "";
+    const box = $("clubList"); box.replaceChildren();
+    if (!list.length) { box.append(el("div", { class: "empty" }, "Clubs appear here after the first scan.")); return; }
+    list.forEach((c, i) => {
+      const id = "club-" + c.key.replace(/[^a-z0-9]/g, "-");
+      box.append(el("div", { class: "club-row" + (c.hidden ? " off" : "") },
+        el("span", { class: "rank" }, c.rank >= 0 ? c.rank + 1 : "–"),
+        el("input", { type: "checkbox", id, checked: !c.hidden, "aria-label": "Show " + c.name, onchange: (e) => setHidden(c.key, !e.target.checked) }),
+        el("label", { class: "name", for: id }, c.name, el("small", null, c.upcoming ? `${c.upcoming} upcoming` : "nothing upcoming")),
+        el("div", { class: "move" },
+          el("button", { type: "button", disabled: i === 0, "aria-label": "Move " + c.name + " to the top", onclick: () => move(list, i, 0) }, "Top"),
+          el("button", { type: "button", disabled: i === 0, "aria-label": "Move " + c.name + " up", onclick: () => move(list, i, i - 1) }, "↑"),
+          el("button", { type: "button", disabled: i === list.length - 1, "aria-label": "Move " + c.name + " down", onclick: () => move(list, i, i + 1) }, "↓"))));
+    });
+  }
+  // Moving any club ranks everything above the moved row's new spot, so the order you see is the order saved.
+  function move(list, from, to) {
+    const keys = list.map((c) => c.key);
+    const [k] = keys.splice(from, 1);
+    keys.splice(to, 0, k);
+    const ranked = new Set(state.prefs.order);
+    const cut = Math.max(from, to) + 1;
+    const order = keys.filter((x, i) => i < cut || ranked.has(x));
+    savePrefs({ ...state.prefs, order });
+  }
+  function setHidden(key, hide) {
+    const hidden = new Set(state.prefs.hidden || []);
+    hide ? hidden.add(key) : hidden.delete(key);
+    savePrefs({ ...state.prefs, hidden: [...hidden] });
+  }
+  async function savePrefs(prefs) {
+    const before = state.prefs;
+    state.prefs = prefs; render();
+    if (!state.db) return;
+    try { await state.db.doc("config/clubs").set(prefs); }
+    catch (e) { state.prefs = before; render(); banner("Couldn't save club order: " + (e.message || e.code), true); }
+  }
+  function renderChats() {
+    const q = $("chatSearch").value.trim().toLowerCase();
+    const rows = Object.entries(state.draftChats)
+      .sort(([, a], [, b]) => (b.include - a.include) || String(a.name).localeCompare(String(b.name)))
+      .filter(([, c]) => !q || String(c.name).toLowerCase().includes(q) || String(c.club || "").toLowerCase().includes(q));
+    const on = Object.values(state.draftChats).filter((c) => c.include).length;
+    $("chatsCount").textContent = `${on} of ${Object.keys(state.draftChats).length} watched`;
+    const list = $("chatList"); list.replaceChildren();
+    for (const [jid, c] of rows) {
+      const id = "chat-" + jid.replace(/[^a-z0-9]/gi, "");
+      list.append(el("div", { class: "chat-row" + (c.include ? "" : " off") },
+        el("input", { type: "checkbox", id: id + "-on", checked: c.include, "aria-label": "Watch " + c.name,
+          onchange: (e) => { c.include = e.target.checked; c.review = false; renderChats(); } }),
+        el("label", { class: "name", for: id + "-on" }, c.name, c.review ? el("span", { class: "badge" }, "new") : null),
+        el("input", { type: "text", id: id + "-club", value: c.club || "", placeholder: "Club (blank for class chats)", "aria-label": "Club for " + c.name,
+          onchange: (e) => { c.club = e.target.value.trim() || null; c.review = false; } })));
+    }
+    if (!rows.length) list.append(el("div", { class: "empty" }, "No groups match."));
+  }
+  async function saveChats() {
+    try {
+      for (const c of Object.values(state.draftChats)) delete c.review;
+      await state.db.doc("config/chats").set({ chats: state.draftChats });
+      state.chats = state.draftChats;
+      const scan = state.setupMode;
+      closeChats(); render();
+      if (scan) refresh();
+    } catch (e) { banner("Couldn't save chats: " + (e.message || e.code), true); }
+  }
+
+  // ---------- boot ----------
+  function setHost(on) {
+    state.host = on;
+    const btn = $("refreshBtn");
+    btn.textContent = state.chats ? "Refresh now" : "Set up radar";
+    // Only the actual WhatsApp call knows for sure; listTools can omit a host server before it's been allowed.
+    btn.disabled = !canRun() || state.busy;
+    $("hostNote").hidden = on;
+  }
+  function canRun() { return !!(state.mcp && state.sample); }
+  // The WhatsApp connector can finish connecting after the page loads, so keep checking until it's there.
+  async function detectHost() {
+    if (!state.mcp || !state.sample) return;
+    try {
+      const tools = await state.mcp.listTools();
+      setHost((tools.servers || []).some((s) => (s.name || s.server) === HOST));
+    } catch (_) { setHost(false); }
+    render();
+  }
+  async function boot() {
+    render(); setHost(false);
+    $("refreshBtn").addEventListener("click", () => (state.chats ? refresh() : startSetup()));
+    $("tab-radar").addEventListener("click", () => showTab("radar"));
+    $("tab-clubs").addEventListener("click", () => showTab("clubs"));
+    $("tab-chats").addEventListener("click", () => (state.chats ? openChats() : startSetup()));
+    $("chatsCancel").addEventListener("click", closeChats);
+    $("chatsSave").addEventListener("click", saveChats);
+    $("chatSearch").addEventListener("input", renderChats);
+    setInterval(render, 60e3);
+
+    if (!window.claude || !window.claude.use) return bootFixture();
+    const [db, mcp, sample] = await Promise.all([claude.use("db"), claude.use("mcp"), claude.use("sample")]);
+    state.db = db; state.mcp = mcp; state.sample = sample;
+    if (!db) { banner("Sign in to claude.ai to see your radar.", true); return; }
+    db.collection("items").onSnapshot((snap) => {
+      state.items = new Map(snap.docs.map((d) => [d.id, d.data()]));
+      render();
+    }, (e) => banner("Couldn't load items: " + (e.message || e.code), true));
+    db.doc("config/chats").onSnapshot((d) => { state.chats = d.exists ? d.data().chats : null; if (!state.busy) setHost(state.host); render(); });
+    db.doc("config/clubs").onSnapshot((d) => { const p = d.exists ? d.data() : {}; state.prefs = { order: p.order || [], hidden: p.hidden || [] }; render(); });
+    db.doc("meta/status").onSnapshot((d) => { state.status = d.exists ? d.data() : null; render(); });
+    if (mcp && sample) {
+      await detectHost();
+      setInterval(() => { if (!state.host) detectHost(); }, 10e3);
+      window.addEventListener("focus", () => { if (!state.host) detectHost(); });
+    }
+  }
+  async function bootFixture() {
+    if (!/^https?:$/.test(location.protocol)) return;
+    try {
+      const f = await (await fetch("fixture.json")).json();
+      state.chats = f.chats; state.status = f.status; state.items = new Map(f.items.map((x) => [x.id, x]));
+      banner("Preview with example data.");
+      render();
+    } catch (_) {}
+  }
+  boot();
+})();
+</script>
