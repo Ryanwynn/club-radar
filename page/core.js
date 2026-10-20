@@ -5,6 +5,7 @@
   const H = 3600e3;
   const DAY = 24 * H;
   const KINDS = ["deadline", "event"];
+  const CATEGORIES = ["social", "professional", "trip"];
   const ISO = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
   const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
   const CLUB_STOP = new Set(["wharton", "club", "the", "mba", "general", "official", "group"]);
@@ -96,6 +97,7 @@
       action: raw.kind === "deadline" ? opt(raw.action) : null,
       link: /^https?:\/\//.test(raw.link || "") ? String(raw.link) : null,
       cgLink: findCgLink(isCgLink(raw.link) ? raw.link : null, msg.text),
+      category: CATEGORIES.includes(raw.category) ? raw.category : null,
       eventTitle: opt(raw.eventTitle),
       eventWhen,
       matchId: opt(raw.matchId),
@@ -109,9 +111,9 @@
     };
   }
 
-  const FIELDS = ["kind", "title", "club", "when", "approx", "beforeEvent", "action", "link", "cgLink", "eventTitle", "eventWhen", "source"];
+  const FIELDS = ["kind", "title", "club", "when", "approx", "beforeEvent", "action", "link", "cgLink", "category", "eventTitle", "eventWhen", "source"];
   // Filled in from CampusGroups by the morning job; a newer message never clears them.
-  const STICKY = ["cgLink", "deadlineFrom", "spotsLeft"];
+  const STICKY = ["cgLink", "category", "deadlineFrom", "spotsLeft"];
   const hasTime = (w) => !!w && !DATE_ONLY.test(w);
   const sameDay = (a, b) => !!a && !!b && localDate(dueTime({ kind: "event", when: a })) === localDate(dueTime({ kind: "event", when: b }));
 
@@ -257,11 +259,23 @@
 
   const BAND = { missed: 0, red: 1, amber: 2, grey: 3 };
 
-  function buildView(items, chats, now, prefs) {
+  // An item's category; a deadline without one takes its event's.
+  function categoryOf(item, items) {
+    if (CATEGORIES.includes(item.category)) return item.category;
+    if (item.kind === "deadline") {
+      const ev = items.find((e) => e.kind === "event" && CATEGORIES.includes(e.category) && sameEvent(item, e));
+      if (ev) return ev.category;
+    }
+    return null;
+  }
+
+  // category: "all" (default) or one of CATEGORIES; uncategorized items show only under "all".
+  function buildView(items, chats, now, prefs, category) {
     const t = now.getTime();
     const rows = items
       .filter((x) => !x.dismissed && !clubHidden(x, prefs))
-      .map((item) => ({ item, mine: isMine(item, chats), due: dueTime(item), rank: clubRank(item, prefs) }));
+      .map((item) => ({ item, mine: isMine(item, chats), due: dueTime(item), rank: clubRank(item, prefs), category: categoryOf(item, items) }))
+      .filter((r) => !category || category === "all" || r.category === category);
 
     const actNow = rows
       .filter((r) => r.item.kind === "deadline")
@@ -380,7 +394,7 @@
   function signupDeadline(ev, cg, cgLink, nowIso) {
     const dl = {
       kind: "deadline", title: `Register for ${ev.title}`, club: ev.club, when: cg.salesEnd, approx: false, beforeEvent: false,
-      action: "register", link: cgLink, cgLink, eventTitle: ev.title, eventWhen: ev.when, source: ev.source || null,
+      action: "register", link: cgLink, cgLink, category: ev.category || null, eventTitle: ev.title, eventWhen: ev.when, source: ev.source || null,
       deadlineFrom: "campusgroups", spotsLeft: cg.spotsLeft,
     };
     return { id: itemKey(dl), firstSeen: nowIso, updatedAt: nowIso, ...dl };
@@ -408,7 +422,7 @@
     return { when: item.eventWhen, approx: false, beforeEvent: true };
   }
 
-  const api = { pageTitle, titleMatches, cutsOffEarly, isCgLink, findCgLink, parseCampusGroups, sameEvent, deadlineFromCampusGroups, signupDeadline, clubKey, clubList, parseEventPage, enrichFromPage, fillFromEvent, hasTime, openItems, safeResumeTs, normClub, normTitle, itemKey, dueTime, normalizeExtraction, mergeItems, isMine, urgency, buildView, staleness, localDate };
+  const api = { CATEGORIES, categoryOf, pageTitle, titleMatches, cutsOffEarly, isCgLink, findCgLink, parseCampusGroups, sameEvent, deadlineFromCampusGroups, signupDeadline, clubKey, clubList, parseEventPage, enrichFromPage, fillFromEvent, hasTime, openItems, safeResumeTs, normClub, normTitle, itemKey, dueTime, normalizeExtraction, mergeItems, isMine, urgency, buildView, staleness, localDate };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.RadarCore = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

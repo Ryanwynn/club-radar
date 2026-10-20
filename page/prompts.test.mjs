@@ -67,3 +67,8 @@ test("cli extraction-prompt builds openItems from existing, hidden ones flagged"
   const out = execFileSync("node", [join(here, "cli.mjs"), "extraction-prompt", join(dir, "in.json")], { encoding: "utf8" });
   assert.ok(out.includes("keep-me") && out.includes("hidden by the student"));
 });
+
+test("categorize prompt lists every item id and the three categories", () => {
+  const s = P.categorize({ items: [{ id: "e--a", kind: "event", title: "Gala", club: "Vets" }, { id: "d--b", kind: "deadline", title: "Pay deposit", club: "Ski", eventTitle: "Ski Trip" }] });
+  for (const needle of ["e--a", "d--b", "for Ski Trip", "social", "professional", "trip"]) assert.ok(s.includes(needle), needle);
+});

@@ -301,3 +301,19 @@ test("an 'approximate' deadline on the event's own day counts down to the event,
   assert.equal(C.urgency({ kind: "deadline", when: "2026-11-30", approx: true }, NOW), "grey");
   assert.equal(C.urgency({ kind: "deadline", when: "2026-10-21", approx: true }, NOW), "red");
 });
+
+test("category filter: deadlines inherit their event's category; uncategorized only under All", () => {
+  const items = [
+    item({ id: "ev", kind: "event", club: "Tennis Club", title: "Tennis Camp", when: "2026-11-01T09:00:00-04:00", category: "trip" }),
+    item({ id: "dl", club: "Tennis Club", title: "Pay deposit", eventTitle: "Tennis Camp", when: "2026-10-25T12:00:00-04:00" }),
+    item({ id: "x", club: "Pub", title: "Mystery", when: "2026-10-26T12:00:00-04:00" }),
+  ];
+  assert.equal(C.categoryOf(items[1], items), "trip");
+  const trips = C.buildView(items, chats, NOW, {}, "trip");
+  assert.deepEqual(trips.actNow.map((r) => r.item.id), ["dl"]);
+  assert.equal(trips.days.length, 1);
+  assert.equal(C.buildView(items, chats, NOW, {}, "social").actNow.length, 0);
+  assert.equal(C.buildView(items, chats, NOW, {}, "all").actNow.length, 2);
+  const x = C.normalizeExtraction({ kind: "event", title: "Gala", club: "Vets", when: "2026-11-13", category: "nonsense", msgId: "m1" }, { msgIndex });
+  assert.equal(x.category, null);
+});

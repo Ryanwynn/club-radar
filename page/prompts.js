@@ -14,8 +14,13 @@
   "eventWhen": string | null, // deadlines only: that event's ISO date, if known
   "msgId": string,            // id of the message that states this (the most recent one, if several)
   "excerpt": string,          // <= 200 chars quoted from that message
-  "matchId": string | null    // id of an OPEN ITEM below if this is the same deadline/event (update/reminder/extension)
+  "matchId": string | null,   // id of an OPEN ITEM below if this is the same deadline/event (update/reminder/extension)
+  "category": "social" | "professional" | "trip"  // see CATEGORIES; a deadline takes its event's category
 }]}`;
+
+  const CATEGORIES = `- trip: treks, trips and travel, anything out of town for a day or more (incl. their deposits, payments and sign-ups)
+- professional: career and learning — speakers, panels, fireside chats, info sessions, conferences, workshops, case competitions, recruiting, coffee chats, applications, surveys about programming
+- social: parties, mixers, socials, sports, games, dinners, cultural and religious celebrations, charity events`;
 
   function extraction({ messages, clubs, openItems, tz, today }) {
     const lines = messages.map((m) => {
@@ -43,6 +48,8 @@ Rules:
 - "club" is who hosts it. Prefer an exact name from KNOWN CLUBS when it matches.
 - A trip/trek with a sign-up deadline gives TWO items: the event (trip dates) and the deadline (with eventTitle/eventWhen).
 - When unsure whether something is real, leave it out.
+- "category" is one of:
+${CATEGORIES}
 
 KNOWN CLUBS: ${(clubs || []).join("; ") || "(none yet)"}
 
@@ -70,6 +77,18 @@ ${lines.join("\n")}
 Reply with JSON only: {"ids": [string]} (empty list if none).`;
   }
 
+  // Quick-tier pass for items saved before categories existed.
+  function categorize({ items }) {
+    const lines = items.map((x) => `- ${x.id} | ${x.kind} | ${String(x.title || "").replace(/\|/g, "/")} | ${String(x.club || "").replace(/\|/g, "/")}${x.eventTitle ? " | for " + String(x.eventTitle).replace(/\|/g, "/") : ""}`);
+    return `Sort a student's club deadlines and events into one category each:
+${CATEGORIES}
+
+ITEMS (id | kind | title | club | event it belongs to):
+${lines.join("\n")}
+
+Reply with JSON only: {"items": [{"id": string, "category": "social" | "professional" | "trip"}]} covering every item above.`;
+  }
+
   function suggestChats({ groups }) {
     const lines = groups.map((g) => `- ${g.jid} | ${String(g.name || "(no name)").replace(/\|/g, "/")}`);
     return `These are a student's WhatsApp groups. For each, decide:
@@ -84,7 +103,7 @@ ${lines.join("\n")}
 Reply with JSON only: {"chats": [{"jid": string, "include": boolean, "club": string | null}]} covering every group above.`;
   }
 
-  const api = { extraction, triage, suggestChats, ITEM_SHAPE };
+  const api = { extraction, triage, categorize, suggestChats, ITEM_SHAPE, CATEGORIES };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.RadarPrompts = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
