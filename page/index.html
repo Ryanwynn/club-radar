@@ -212,11 +212,11 @@
   const isDateOnly = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
 
   function countdown(item, urg) {
-    if (urg === "grey" && (item.approx || !item.when)) return ["TBD", "date"];
+    if (!item.when) return ["TBD", "date"];
     const ms = C.dueTime(item) - Date.now();
     const abs = Math.abs(ms), d = Math.floor(abs / 864e5), h = Math.floor(abs / 36e5) % 24, m = Math.floor(abs / 6e4) % 60;
     const txt = d >= 1 ? `${d}d ${String(h).padStart(2, "0")}h` : `${h}h ${String(m).padStart(2, "0")}m`;
-    return ms < 0 ? [txt, "ago"] : [txt, item.beforeEvent ? "to event" : "left"];
+    return ms < 0 ? [txt, "ago"] : [txt, item.beforeEvent ? "to event" : item.approx ? "approx" : "left"];
   }
   function whenText(item) {
     if (!item.when) return "Date not announced";

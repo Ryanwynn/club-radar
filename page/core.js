@@ -84,7 +84,8 @@
     const opt = (v) => (v == null || v === "" ? null : String(v).trim());
     const eventWhen = opt(raw.eventWhen) && ISO.test(opt(raw.eventWhen)) ? opt(raw.eventWhen) : null;
     if (!when && !approx && !(raw.kind === "deadline" && eventWhen)) return null;
-    const beforeEvent = raw.kind === "deadline" && !when && !!eventWhen;
+    // No cutoff of its own: none given, or an "approximate" one that is just the event's day.
+    const beforeEvent = raw.kind === "deadline" && !!eventWhen && (!when || (approx && sameDay(when, eventWhen)));
     return {
       kind: raw.kind,
       title: title.slice(0, 160),
@@ -202,7 +203,7 @@
 
   function urgency(item, now) {
     const due = dueTime(item);
-    if (item.approx || due == null) return "grey";
+    if (due == null) return "grey";
     const diff = due - now.getTime();
     if (diff < -DAY) return "hidden";
     if (diff < 0) return "missed";
@@ -267,8 +268,8 @@
       .map((r) => ({ ...r, urgency: urgency(r.item, now) }))
       .filter((r) => r.urgency !== "hidden")
       .sort((a, b) => {
-        const ta = a.item.approx || a.due == null;
-        const tb = b.item.approx || b.due == null;
+        const ta = a.due == null;
+        const tb = b.due == null;
         if (ta !== tb) return ta ? 1 : -1;
         // Within an urgency band, higher-priority clubs first.
         return BAND[a.urgency] - BAND[b.urgency] || byRank(a, b) || byDueMineTitle(a, b);
@@ -402,7 +403,8 @@
 
   // Deadlines saved before beforeEvent existed: no cutoff, but the event date is known.
   function fillFromEvent(item) {
-    if (item.kind !== "deadline" || item.when || !item.eventWhen || !ISO.test(item.eventWhen)) return null;
+    if (item.kind !== "deadline" || item.beforeEvent || !item.eventWhen || !ISO.test(item.eventWhen)) return null;
+    if (item.when && !(item.approx && sameDay(item.when, item.eventWhen))) return null;
     return { when: item.eventWhen, approx: false, beforeEvent: true };
   }
 

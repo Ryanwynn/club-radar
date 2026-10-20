@@ -291,3 +291,13 @@ test("titleMatches rejects another event's page", () => {
   assert.equal(C.titleMatches("WAAAM Escape 2026", { title: "Othership Williamsburg social flow session" }), false);
   assert.equal(C.titleMatches("WAAAM Escape 2026", { title: "WAAAM Escape Inter-MBA Social" }), true);
 });
+
+test("an 'approximate' deadline on the event's own day counts down to the event, not TBD", () => {
+  const raw = { kind: "deadline", title: "Register for chat", club: "EClub", when: "2026-10-27T12:00-04:00", approx: true, eventTitle: "Chat", eventWhen: "2026-10-27T12:00-04:00", msgId: "m1" };
+  const x = C.normalizeExtraction(raw, { msgIndex });
+  assert.equal(x.beforeEvent, true);
+  assert.equal(x.approx, false);
+  assert.deepEqual(C.fillFromEvent({ kind: "deadline", when: "2026-10-27T12:00-04:00", approx: true, eventWhen: "2026-10-27T12:00-04:00" }), { when: "2026-10-27T12:00-04:00", approx: false, beforeEvent: true });
+  assert.equal(C.urgency({ kind: "deadline", when: "2026-11-30", approx: true }, NOW), "grey");
+  assert.equal(C.urgency({ kind: "deadline", when: "2026-10-21", approx: true }, NOW), "red");
+});
