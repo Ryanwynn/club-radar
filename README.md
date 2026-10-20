@@ -6,6 +6,7 @@ Club Radar is a private page on claude.ai that reads your WhatsApp groups on you
 
 - **Act now** — deadlines (ticket sales, RSVPs, sign-up forms, deposits, applications) with a live countdown, most urgent first. Where an event is on CampusGroups, it shows the real sign-up cutoff ("Sales End") and spots left, and links straight to the CampusGroups page.
 - **Upcoming events** — the next 60 days, by day, with start times.
+- **Social / Professional / Trips & treks** — filter chips split everything by type; deadlines follow their event.
 - **Clubs** — rank the clubs you care about so their items come first, or hide the ones you don't.
 
 It runs entirely on your Mac and your own claude.ai account. Nobody else (including whoever shared this kit with you) can see your messages or your page.
