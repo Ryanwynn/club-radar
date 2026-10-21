@@ -263,7 +263,7 @@ test("clubList merges name variants, ranked first then A–Z", () => {
 
 test("CampusGroups: sales end parsed in Eastern time, latest option wins, max spots", () => {
   const html = '<div aria-label="Registration Options"> Option Member Sales End Oct 14, 2026 at 12 PM Availability 4 Spots Left Option Guest Sales End Oct 28, 2026 at 11:55 PM Availability 2 Spots Left </div> Details more';
-  assert.deepEqual(C.parseCampusGroups(html), { salesEnd: "2026-10-28T23:55-04:00", spotsLeft: 4, closed: false });
+  assert.deepEqual(C.parseCampusGroups(html), { salesEnd: "2026-10-28T23:55-04:00", spotsLeft: 4, cost: null, closed: false });
   assert.equal(C.parseCampusGroups('<div aria-label="Registration Options">Sales End Dec 2, 2026 at 9 AM</div>').salesEnd, "2026-12-02T09:00-05:00");
   assert.equal(C.parseCampusGroups("<p>no options</p>"), null);
 });
@@ -316,4 +316,24 @@ test("category filter: deadlines inherit their event's category; uncategorized o
   assert.equal(C.buildView(items, chats, NOW, {}, "all").actNow.length, 2);
   const x = C.normalizeExtraction({ kind: "event", title: "Gala", club: "Vets", when: "2026-11-13", category: "nonsense", msgId: "m1" }, { msgIndex });
   assert.equal(x.category, null);
+});
+
+test("cost: CampusGroups ticket table, message price, deadline shows its event's price", () => {
+  const row = (name, price) => `<tr id="ticket_1"><td><b>${name}</b></td><td><span class="rsvp__table-resp--title">Price</span> ${price} </td></tr>`;
+  assert.equal(C.campusGroupsCost(row("Member", "$10") + row("Non-member", "$15")), "Member $10 · Non-member $15");
+  assert.equal(C.campusGroupsCost(row("RSVP", "FREE")), "Free");
+  assert.equal(C.campusGroupsCost(row("Member", "$300") + row("If you want a single room, please indicate by purchasing this option.", "FREE")), "$300");
+  assert.equal(C.campusGroupsCost(row("Alumni &amp; Guests", "$140") + "<a>There are more registration options available</a>"), "Alumni & Guests $140 · more options after sign-in");
+  const x = C.normalizeExtraction({ kind: "event", title: "Gala", club: "Vets", when: "2026-11-13", cost: "$85", msgId: "m1" }, { msgIndex });
+  assert.equal(x.cost, "$85");
+  const ev = item({ id: "ev", kind: "event", club: "Ski", title: "Ski Trip", when: "2027-01-15", cost: "$900" });
+  const dl = item({ id: "dl", club: "Ski", title: "Pay deposit", eventTitle: "Ski Trip" });
+  assert.equal(C.costOf(dl, [ev, dl]), "$900");
+  // Both prices show when they differ; a repost keeps the CampusGroups one.
+  const [saved] = C.mergeItems([], [x], "t0").upserts;
+  const cg = { ...saved, ...C.costFromCampusGroups(saved, { cost: "Member $80 · Guest $95" }) };
+  assert.equal(C.costOf(cg, [cg]), "$85 · CampusGroups: Member $80 · Guest $95");
+  const repost = C.normalizeExtraction({ kind: "event", title: "Gala", club: "Vets", when: "2026-11-13", cost: null, msgId: "m3", excerpt: "see you there" }, { msgIndex });
+  const [after] = C.mergeItems([cg], [repost], "t1").upserts;
+  assert.equal(C.costOf(after, [after]), "$85 · CampusGroups: Member $80 · Guest $95");
 });

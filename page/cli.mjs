@@ -94,6 +94,7 @@ if (cmd === "merge") {
       if (url === cgLink && item.cgLink !== cgLink) patch(item, { cgLink });
       patch(item, C.enrichFromPage(view(item), page.start));
       if (!page.cg) continue;
+      patch(item, C.costFromCampusGroups(view(item), page.cg));
       if (item.kind === "deadline") { patch(item, C.deadlineFromCampusGroups(view(item), page.cg)); continue; }
       const ev = view(item);
       if (!C.cutsOffEarly(page.cg, ev.when) || Date.parse(page.cg.salesEnd) < now - 864e5) continue;

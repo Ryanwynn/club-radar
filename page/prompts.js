@@ -15,7 +15,8 @@
   "msgId": string,            // id of the message that states this (the most recent one, if several)
   "excerpt": string,          // <= 200 chars quoted from that message
   "matchId": string | null,   // id of an OPEN ITEM below if this is the same deadline/event (update/reminder/extension)
-  "category": "social" | "professional" | "trip"  // see CATEGORIES; a deadline takes its event's category
+  "category": "social" | "professional" | "trip", // see CATEGORIES; a deadline takes its event's category
+  "cost": string | null       // what it costs the student, short, as stated: "Free", "$45", "$300 deposit, $2,000 total", "Members $10 / non-members $15"; null if not mentioned
 }]}`;
 
   const CATEGORIES = `- trip: treks, trips and travel, anything out of town for a day or more (incl. their deposits, payments and sign-ups)

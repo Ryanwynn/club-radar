@@ -98,6 +98,7 @@
       link: /^https?:\/\//.test(raw.link || "") ? String(raw.link) : null,
       cgLink: findCgLink(isCgLink(raw.link) ? raw.link : null, msg.text),
       category: CATEGORIES.includes(raw.category) ? raw.category : null,
+      cost: opt(raw.cost) ? opt(raw.cost).slice(0, 90) : null,
       eventTitle: opt(raw.eventTitle),
       eventWhen,
       matchId: opt(raw.matchId),
@@ -111,9 +112,9 @@
     };
   }
 
-  const FIELDS = ["kind", "title", "club", "when", "approx", "beforeEvent", "action", "link", "cgLink", "category", "eventTitle", "eventWhen", "source"];
+  const FIELDS = ["kind", "title", "club", "when", "approx", "beforeEvent", "action", "link", "cgLink", "category", "cost", "eventTitle", "eventWhen", "source"];
   // Filled in from CampusGroups by the morning job; a newer message never clears them.
-  const STICKY = ["cgLink", "category", "deadlineFrom", "spotsLeft"];
+  const STICKY = ["cgLink", "category", "cost", "deadlineFrom", "cgCost", "spotsLeft"];
   const hasTime = (w) => !!w && !DATE_ONLY.test(w);
   const sameDay = (a, b) => !!a && !!b && localDate(dueTime({ kind: "event", when: a })) === localDate(dueTime({ kind: "event", when: b }));
 
@@ -269,12 +270,21 @@
     return null;
   }
 
+  // What it costs, from the announcement and/or CampusGroups' ticket table; a deadline falls back to its event's.
+  function costOf(item, items) {
+    const ev = item.kind === "deadline" ? items.find((e) => e.kind === "event" && (e.cost || e.cgCost) && sameEvent(item, e)) : null;
+    const quoted = item.cost || (ev && ev.cost) || null;
+    const tickets = item.cgCost || (ev && ev.cgCost) || null;
+    if (!tickets || tickets === quoted) return quoted;
+    return quoted ? `${quoted} · CampusGroups: ${tickets}` : tickets;
+  }
+
   // category: "all" (default) or one of CATEGORIES; uncategorized items show only under "all".
   function buildView(items, chats, now, prefs, category) {
     const t = now.getTime();
     const rows = items
       .filter((x) => !x.dismissed && !clubHidden(x, prefs))
-      .map((item) => ({ item, mine: isMine(item, chats), due: dueTime(item), rank: clubRank(item, prefs), category: categoryOf(item, items) }))
+      .map((item) => ({ item, mine: isMine(item, chats), due: dueTime(item), rank: clubRank(item, prefs), category: categoryOf(item, items), cost: costOf(item, items) }))
       .filter((r) => !category || category === "all" || r.category === category);
 
     const actNow = rows
@@ -358,10 +368,28 @@
       ends.push(easternIso(+m[3], mo, +m[2], h, m[5] ? +m[5] : 0));
     }
     const spots = [...body.matchAll(/(\d+) Spots? Left/g)].map((x) => +x[1]);
-    if (!ends.length) return { salesEnd: null, spotsLeft: null, closed: /Registration is (now )?closed/i.test(body) };
+    const cost = campusGroupsCost(s.slice(at, at + 40000));
+    if (!ends.length) return { salesEnd: null, spotsLeft: null, cost, closed: /Registration is (now )?closed/i.test(body) };
     // Several options (member / non-member …): registration is open until the last one closes.
     const salesEnd = ends.sort((a, b) => Date.parse(a) - Date.parse(b))[ends.length - 1];
-    return { salesEnd, spotsLeft: spots.length ? Math.max(...spots) : null, closed: false };
+    return { salesEnd, spotsLeft: spots.length ? Math.max(...spots) : null, cost, closed: false };
+  }
+
+  // "Member Deposit $300 · Non-Member Deposit $350" from the ticket table; one price when they all match.
+  function campusGroupsCost(html) {
+    const unescape = (t) => t.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&#039;/g, "'").replace(/\s+/g, " ").trim();
+    const rows = [...String(html).matchAll(/<tr id="ticket_[\s\S]*?<\/tr>/g)].map((m) => {
+      const name = unescape((/<b>([\s\S]*?)<\/b>/.exec(m[0]) || ["", ""])[1]);
+      const price = unescape((/Price<\/span>([\s\S]*?)<\/td>/.exec(m[0]) || ["", ""])[1]);
+      return { name, price: /^free$/i.test(price) ? "Free" : price };
+    }).filter((r) => r.price);
+    // Long sentences are add-ons ("if you want a single room…"), not ticket types.
+    const tickets = rows.filter((r) => r.name.length <= 40);
+    const list = tickets.length ? tickets : rows;
+    if (!list.length) return null;
+    const more = /more registration options available/i.test(html) ? " · more options after sign-in" : "";
+    if (new Set(list.map((r) => r.price)).size === 1) return (list.length === 1 && more ? `${list[0].name} ${list[0].price}` : list[0].price) + more;
+    return list.slice(0, 3).map((r) => `${r.name} ${r.price}`).join(" · ") + (list.length > 3 ? " · …" : "") + more;
   }
 
   // Sales that run until the event starts (or later) aren't an earlier cutoff.
@@ -394,7 +422,7 @@
   function signupDeadline(ev, cg, cgLink, nowIso) {
     const dl = {
       kind: "deadline", title: `Register for ${ev.title}`, club: ev.club, when: cg.salesEnd, approx: false, beforeEvent: false,
-      action: "register", link: cgLink, cgLink, category: ev.category || null, eventTitle: ev.title, eventWhen: ev.when, source: ev.source || null,
+      action: "register", link: cgLink, cgLink, category: ev.category || null, cost: ev.cost || null, cgCost: cg.cost || ev.cgCost || null, eventTitle: ev.title, eventWhen: ev.when, source: ev.source || null,
       deadlineFrom: "campusgroups", spotsLeft: cg.spotsLeft,
     };
     return { id: itemKey(dl), firstSeen: nowIso, updatedAt: nowIso, ...dl };
@@ -422,7 +450,13 @@
     return { when: item.eventWhen, approx: false, beforeEvent: true };
   }
 
-  const api = { CATEGORIES, categoryOf, pageTitle, titleMatches, cutsOffEarly, isCgLink, findCgLink, parseCampusGroups, sameEvent, deadlineFromCampusGroups, signupDeadline, clubKey, clubList, parseEventPage, enrichFromPage, fillFromEvent, hasTime, openItems, safeResumeTs, normClub, normTitle, itemKey, dueTime, normalizeExtraction, mergeItems, isMine, urgency, buildView, staleness, localDate };
+  // Ticket prices from an item's CampusGroups page, kept apart from the price quoted in messages.
+  function costFromCampusGroups(item, cg) {
+    if (!cg || !cg.cost || item.cgCost === cg.cost) return null;
+    return { cgCost: cg.cost };
+  }
+
+  const api = { costOf, campusGroupsCost, costFromCampusGroups, CATEGORIES, categoryOf, pageTitle, titleMatches, cutsOffEarly, isCgLink, findCgLink, parseCampusGroups, sameEvent, deadlineFromCampusGroups, signupDeadline, clubKey, clubList, parseEventPage, enrichFromPage, fillFromEvent, hasTime, openItems, safeResumeTs, normClub, normTitle, itemKey, dueTime, normalizeExtraction, mergeItems, isMine, urgency, buildView, staleness, localDate };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.RadarCore = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

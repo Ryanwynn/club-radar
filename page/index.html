@@ -86,6 +86,7 @@
   .chips button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
   .chips button .n { font-family: var(--font-data); opacity: .75; margin-left: 4px; }
   .cat { font-size: 12px; color: var(--muted); }
+  .cost { font-family: var(--font-data); font-size: 12px; font-weight: 600; color: var(--fg); background: var(--grey-soft); border-radius: 6px; padding: 1px 7px; overflow-wrap: anywhere; }
   .verified { color: var(--accent); font-weight: 600; }
   .warn { font-size: 13px; color: var(--amber); margin-top: 2px; }
   .btn.cg { border-color: var(--accent); color: var(--accent); }
@@ -225,6 +226,7 @@
   }
   const CAT_LABEL = { social: "Social", professional: "Professional", trip: "Trip" };
   const catTag = (r) => r.category && el("span", { class: "cat" }, CAT_LABEL[r.category]);
+  const costTag = (r) => r.cost && el("span", { class: "cost" }, r.cost);
 
   // ---------- formatting ----------
   const fmtDay = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -290,7 +292,7 @@
         el("div", { class: "due " + r.urgency, title: whenText(r.item) }, big, el("small", null, r.urgency === "missed" ? "missed" : small)),
         el("div", null,
           el("div", { class: "title" }, r.item.title),
-          el("div", { class: "meta" }, tagFor(r.mine), el("span", null, r.item.club), catTag(r), el("span", null, whenText(r.item)), forEvent && el("span", null, forEvent),
+          el("div", { class: "meta" }, tagFor(r.mine), el("span", null, r.item.club), catTag(r), costTag(r), el("span", null, whenText(r.item)), forEvent && el("span", null, forEvent),
             r.item.deadlineFrom === "campusgroups" && el("span", { class: "verified" }, "✓ from CampusGroups" + (r.item.spotsLeft != null ? ` · ${r.item.spotsLeft} spot${r.item.spotsLeft === 1 ? "" : "s"} left` : ""))),
           deadlineWarning(r.item) && el("div", { class: "warn" }, deadlineWarning(r.item))),
         rowActions(r.item),
@@ -328,7 +330,7 @@
   function eventBlock(r) {
     return el("div", { class: "event" },
       el("div", { class: "title" }, r.item.title),
-      el("div", { class: "meta" }, tagFor(r.mine), el("span", null, r.item.club), catTag(r),
+      el("div", { class: "meta" }, tagFor(r.mine), el("span", null, r.item.club), catTag(r), costTag(r),
         r.item.when && !isDateOnly(r.item.when) && el("span", null, fmtTime.format(C.dueTime(r.item))),
         linkButtons(r.item, "Details ↗"),
         el("button", { type: "button", onclick: () => dismiss(r.item.id) }, "Hide")),
