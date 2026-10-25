@@ -51,6 +51,33 @@ The first run downloads Go packages and compiles for a minute or two. Then scan 
 
 If it fails with `go-sqlite3 requires cgo` or a missing `clang`, install the Xcode Command Line Tools (see the table) and run it again.
 
+### Optional: keep the bridge running in the background
+
+A Terminal window stops the bridge when it closes. To have macOS run it instead, and let **Refresh now** restart it if it's down, first build it once and link it with the QR code as above (`go build -o whatsapp-bridge .` in `~/whatsapp-mcp/whatsapp-bridge`, then `./whatsapp-bridge`, scan, Ctrl+C). Then save this as `~/Library/LaunchAgents/local.whatsapp-bridge.plist`, replacing `YOU` with your Mac username:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>local.whatsapp-bridge</string>
+  <key>ProgramArguments</key><array><string>/Users/YOU/whatsapp-mcp/whatsapp-bridge/whatsapp-bridge</string></array>
+  <key>WorkingDirectory</key><string>/Users/YOU/whatsapp-mcp/whatsapp-bridge</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/YOU/Library/Logs/whatsapp-bridge.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/Library/Logs/whatsapp-bridge.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.whatsapp-bridge.plist
+```
+
+Don't also run it from Terminal: two copies fight over the same WhatsApp link. In step 3, add the `env` block shown there so Refresh knows which agent to restart.
+
 ## 2. Add Club Radar's read-only tools
 
 
@@ -64,7 +91,7 @@ Check it (downloads the Python packages the first time; should end with `9 passe
 cd ~/whatsapp-mcp/whatsapp-mcp-server && uv run --with pytest pytest -q test_radar.py
 ```
 
-The patch adds three tools: `list_groups`, `list_group_messages` and `download_group_media` (used by the morning run for flyers). They only read your group messages, and they never return phone numbers.
+The patch adds three read-only tools: `list_groups`, `list_group_messages` and `download_group_media` (used by the morning run for flyers). They only read your group messages, and they never return phone numbers. It also adds `bridge_status`, which Refresh uses to check the bridge is running, and `start_bridge`, which starts the background bridge from the optional step above if it's down (it never starts a second copy).
 
 ## 3. Register the server with Claude
 
@@ -75,13 +102,17 @@ Add this to your Claude desktop config (Claude → Settings → Developer → Ed
   "mcpServers": {
     "whatsapp": {
       "command": "uv",
-      "args": ["--directory", "/Users/YOU/whatsapp-mcp/whatsapp-mcp-server", "run", "main.py"]
+      "args": ["--directory", "/Users/YOU/whatsapp-mcp/whatsapp-mcp-server", "run", "main.py"],
+      "env": {
+        "WHATSAPP_BRIDGE_LAUNCHD_LABEL": "local.whatsapp-bridge",
+        "WHATSAPP_BRIDGE_PLIST": "/Users/YOU/Library/LaunchAgents/local.whatsapp-bridge.plist"
+      }
     }
   }
 }
 ```
 
-Quit and reopen the Claude app. To check it: in the Code tab, ask "list my WhatsApp groups with the whatsapp list_groups tool". You should see your groups.
+Leave out `env` if you run the bridge from Terminal; Refresh then still warns you when the bridge is down but can't start it. Quit and reopen the Claude app. To check it: in the Code tab, ask "list my WhatsApp groups with the whatsapp list_groups tool". You should see your groups.
 
 This is separate from Claude Code's own MCP config (`claude mcp add` / `~/.claude.json`). If WhatsApp is only registered there, Claude Code can read it but the page can't, and **Set up** shows "WhatsApp isn't reachable". If the app can't find `uv`, use its full path (`which uv`, e.g. `/opt/homebrew/bin/uv`).
 
@@ -90,7 +121,7 @@ This is separate from Claude Code's own MCP config (`claude mcp add` / `~/.claud
 Open the Claude app's **Code** tab with `~/club-radar` as the folder and say:
 
 > Publish page/index.html as a new artifact with supporting files core.js (from page/core.js) and prompts.js (from page/prompts.js), icon "calendar", and capabilities
-> `{"mcp":{"servers":[{"server":"host:whatsapp","tools":["list_groups","list_group_messages"]}]},"sample":{},"db":{"rules":[{"path":"","read":"owner","write":"owner"}]},"user":{}}`
+> `{"mcp":{"servers":[{"server":"host:whatsapp","tools":["list_groups","list_group_messages","bridge_status","start_bridge"]}]},"sample":{},"db":{"rules":[{"path":"","read":"owner","write":"owner"}]},"user":{}}`
 
 The page is private to you. Its access rules let only the owner read its data, even if you share the link later.
 

@@ -1,7 +1,7 @@
 From f0cd27283e93124a4f5910c58203a709a0837869 Mon Sep 17 00:00:00 2001
 From: Ryanwynn <152665891+Ryanwynn@users.noreply.github.com>
 Date: Tue, 20 Oct 2026 17:59:09 -0400
-Subject: [PATCH 1/2] feat: read-only structured group tools for Club Radar
+Subject: [PATCH 1/3] feat: read-only structured group tools for Club Radar
 
 Adds list_groups and list_group_messages (readOnlyHint), hashes sender ids,
 pages without splitting same-second messages. Pins mcp[cli]>=1.9,<2.
@@ -1457,7 +1457,7 @@ index f008340..e048dae 100644
 From 08eaa0dd20aac3afde86dca83f3abfbed6b829e7 Mon Sep 17 00:00:00 2001
 From: Ryanwynn <152665891+Ryanwynn@users.noreply.github.com>
 Date: Tue, 20 Oct 2026 18:10:03 -0400
-Subject: [PATCH 2/2] fix: hide phone numbers in legacy group ids; add
+Subject: [PATCH 2/3] fix: hide phone numbers in legacy group ids; add
  download_group_media
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -1586,6 +1586,208 @@ index d7a039d..7b21fa4 100644
 +    assert [m["id"] for m in out["messages"]] == ["L1"]
 +    assert radar.resolve_chat_id(pid) == "15551234567-1600000000@g.us"
 +    assert radar.resolve_chat_id("g1@g.us") == "g1@g.us"
+-- 
+2.50.0
+
+
+From bbef235f0027ea14f82e841b5aa5498f37116ab8 Mon Sep 17 00:00:00 2001
+From: Ryanwynn <152665891+Ryanwynn@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 13:52:55 -0400
+Subject: [PATCH 3/3] feat: bridge_status and start_bridge tools (restart the
+ launchd bridge agent)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ whatsapp-mcp-server/bridge.py      | 109 +++++++++++++++++++++++++++++
+ whatsapp-mcp-server/main.py        |  20 ++++++
+ whatsapp-mcp-server/test_bridge.py |  23 ++++++
+ 3 files changed, 152 insertions(+)
+ create mode 100644 whatsapp-mcp-server/bridge.py
+ create mode 100644 whatsapp-mcp-server/test_bridge.py
+
+diff --git a/whatsapp-mcp-server/bridge.py b/whatsapp-mcp-server/bridge.py
+new file mode 100644
+index 0000000..4f03bd9
+--- /dev/null
++++ b/whatsapp-mcp-server/bridge.py
+@@ -0,0 +1,109 @@
++"""Health check and restart for the Go whatsapp-bridge when it runs as a launchd agent (macOS).
++
++Configure with environment variables on the MCP server entry:
++  WHATSAPP_BRIDGE_LAUNCHD_LABEL  launchd label of the bridge agent (required to restart it)
++  WHATSAPP_BRIDGE_PLIST          path to its plist, used to load the agent if it isn't loaded
++  WHATSAPP_BRIDGE_PORT           the bridge's REST port (default 8080)
++"""
++import os
++import re
++import socket
++import sqlite3
++import subprocess
++import time
++from typing import Any, Dict, Optional
++
++from whatsapp import MESSAGES_DB_PATH
++
++LABEL = os.environ.get("WHATSAPP_BRIDGE_LAUNCHD_LABEL") or None
++PLIST = os.environ.get("WHATSAPP_BRIDGE_PLIST") or None
++PORT = int(os.environ.get("WHATSAPP_BRIDGE_PORT") or 8080)
++LOG = os.path.expanduser(os.environ.get("WHATSAPP_BRIDGE_LOG") or "~/Library/Logs/whatsapp-bridge.log")
++START_WAIT_S = 20
++
++
++def _domain() -> str:
++    return f"gui/{os.getuid()}"
++
++
++def _port_open(port: int = PORT) -> bool:
++    try:
++        with socket.create_connection(("127.0.0.1", port), timeout=1):
++            return True
++    except OSError:
++        return False
++
++
++def _launchd_state() -> Optional[str]:
++    """'running', another launchd state such as 'not running', or None when the agent isn't loaded."""
++    if not LABEL:
++        return None
++    res = subprocess.run(["launchctl", "print", f"{_domain()}/{LABEL}"], capture_output=True, text=True)
++    if res.returncode != 0:
++        return None
++    m = re.search(r"^\s*state = (.+)$", res.stdout, re.M)
++    return m.group(1).strip() if m else "unknown"
++
++
++def _needs_relink() -> bool:
++    """True when the bridge's log says the device was logged out after it last connected."""
++    try:
++        with open(LOG, "rb") as f:
++            f.seek(0, os.SEEK_END)
++            f.seek(max(0, f.tell() - 200_000))
++            tail = f.read().decode("utf-8", "replace")
++    except OSError:
++        return False
++    return tail.rfind("Device logged out") > tail.rfind("Connected to WhatsApp")
++
++
++def _last_message_ts() -> Optional[str]:
++    try:
++        conn = sqlite3.connect(f"file:{MESSAGES_DB_PATH}?mode=ro", uri=True)
++        try:
++            row = conn.execute("SELECT MAX(timestamp) FROM messages").fetchone()
++        finally:
++            conn.close()
++        return row[0] if row else None
++    except sqlite3.Error:
++        return None
++
++
++def status() -> Dict[str, Any]:
++    running = _port_open()
++    if running and _needs_relink():
++        state = "needs_relink"
++    else:
++        state = "running" if running else "stopped"
++    return {
++        "state": state,
++        "managed": bool(LABEL),
++        "launchd_state": _launchd_state(),
++        "last_message_ts": _last_message_ts(),
++    }
++
++
++def start() -> Dict[str, Any]:
++    """Start the bridge's launchd agent if it isn't serving. Never starts a second copy."""
++    before = status()
++    if before["state"] != "stopped":
++        return {**before, "action": "none"}
++    if not LABEL:
++        return {**before, "action": "unmanaged",
++                "detail": "Set WHATSAPP_BRIDGE_LAUNCHD_LABEL on this MCP server so it can restart the bridge."}
++    if before["launchd_state"] is None:
++        if not PLIST:
++            return {**before, "action": "failed", "detail": f"launchd agent {LABEL} isn't loaded and WHATSAPP_BRIDGE_PLIST isn't set."}
++        cmd = ["launchctl", "bootstrap", _domain(), os.path.expanduser(PLIST)]
++    else:
++        # Without -k: starts the job only if it isn't running, so a live bridge is never killed.
++        cmd = ["launchctl", "kickstart", f"{_domain()}/{LABEL}"]
++    res = subprocess.run(cmd, capture_output=True, text=True)
++    if res.returncode != 0:
++        return {**status(), "action": "failed", "detail": (res.stderr or res.stdout).strip()[:300]}
++    deadline = time.time() + START_WAIT_S
++    while time.time() < deadline and not _port_open():
++        time.sleep(1)
++    after = status()
++    return {**after, "action": "started" if after["state"] != "stopped" else "failed",
++            "detail": None if after["state"] != "stopped" else f"Bridge didn't come up within {START_WAIT_S}s; see {LOG}."}
+diff --git a/whatsapp-mcp-server/main.py b/whatsapp-mcp-server/main.py
+index 8c89a37..b9d7ded 100644
+--- a/whatsapp-mcp-server/main.py
++++ b/whatsapp-mcp-server/main.py
+@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional
+ from mcp.server.fastmcp import FastMCP
+ from mcp.types import ToolAnnotations
+ import radar
++import bridge
+ from whatsapp import (
+     search_contacts as whatsapp_search_contacts,
+     list_messages as whatsapp_list_messages,
+@@ -286,6 +287,25 @@ def download_group_media(message_id: str, chat_id: str) -> Dict[str, Any]:
+     """
+     return download_media(message_id, radar.resolve_chat_id(chat_id))
+ 
++@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
++def bridge_status() -> Dict[str, Any]:
++    """Check whether the WhatsApp bridge (which keeps the message store in sync) is running (read-only).
++
++    Returns:
++        {state: "running" | "stopped" | "needs_relink", managed, launchd_state, last_message_ts}
++        needs_relink means WhatsApp logged this device out; scan the bridge's QR code again.
++    """
++    return bridge.status()
++
++@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True))
++def start_bridge() -> Dict[str, Any]:
++    """Start the WhatsApp bridge's launchd agent if it isn't running. Does nothing if it's already up.
++
++    Returns:
++        bridge_status fields plus action: "none" | "started" | "failed" | "unmanaged", and detail on failure
++    """
++    return bridge.start()
++
+ if __name__ == "__main__":
+     # Initialize and run the server
+     mcp.run(transport='stdio')
+\ No newline at end of file
+diff --git a/whatsapp-mcp-server/test_bridge.py b/whatsapp-mcp-server/test_bridge.py
+new file mode 100644
+index 0000000..c56b1f8
+--- /dev/null
++++ b/whatsapp-mcp-server/test_bridge.py
+@@ -0,0 +1,23 @@
++import bridge
++
++
++def test_needs_relink_only_when_logout_is_latest(tmp_path, monkeypatch):
++    log = tmp_path / "bridge.log"
++    monkeypatch.setattr(bridge, "LOG", str(log))
++    log.write_text("Connected to WhatsApp\nDevice logged out, please scan QR code\n")
++    assert bridge._needs_relink()
++    log.write_text("Device logged out, please scan QR code\nConnected to WhatsApp\n")
++    assert not bridge._needs_relink()
++
++
++def test_start_is_noop_when_running(monkeypatch):
++    monkeypatch.setattr(bridge, "_port_open", lambda port=0: True)
++    monkeypatch.setattr(bridge, "_needs_relink", lambda: False)
++    assert bridge.start()["action"] == "none"
++
++
++def test_start_unmanaged_without_label(monkeypatch):
++    monkeypatch.setattr(bridge, "_port_open", lambda port=0: False)
++    monkeypatch.setattr(bridge, "LABEL", None)
++    res = bridge.start()
++    assert res["action"] == "unmanaged" and res["state"] == "stopped"
 -- 
 2.50.0
 

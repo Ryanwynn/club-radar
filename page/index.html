@@ -435,11 +435,33 @@
     return { chats, added, groups: groups || [] };
   }
 
+  // The bridge keeps WhatsApp's message store in sync; if it's down, Refresh would read stale messages without saying so.
+  // Returns {text, warn}: a sentence for the final banner (empty when the bridge was already fine).
+  async function ensureBridge() {
+    let st;
+    const ok = { text: "", warn: false };
+    try { st = await call("bridge_status"); } catch (_) { return ok; } // older WhatsApp server without the tool: skip the check
+    if (!st || st.state === "running") return ok;
+    if (st.state === "needs_relink") {
+      return { text: " WhatsApp logged out the bridge on this Mac, so new messages aren't syncing. Re-link it by scanning the bridge's QR code (see SETUP.md).", warn: true };
+    }
+    progress(0.02, "Starting the WhatsApp bridge…");
+    let res;
+    try { res = await call("start_bridge"); } catch (e) { res = { action: "failed", detail: e.message || e.code }; }
+    if (!res || res.action !== "started") {
+      return { text: " The WhatsApp bridge is off and Club Radar couldn't start it" + (res && res.detail ? ` (${res.detail})` : "") + ", so only messages synced before it stopped were checked.", warn: true };
+    }
+    for (let i = 10; i > 0; i--) { progress(0.03, `Bridge started. Letting new messages sync… ${i}s`); await new Promise((r) => setTimeout(r, 1000)); }
+    return { text: " The WhatsApp bridge was off, so Club Radar restarted it; anything still syncing will show up on the next Refresh.", warn: false };
+  }
+
   async function refresh() {
     if (state.busy || !canRun() || !state.chats) return;
     state.busy = true; $("refreshBtn").disabled = true; banner("");
     const status = { ...(state.status || {}) };
     try {
+      progress(0.01, "Checking the WhatsApp bridge…");
+      const bridge = await ensureBridge();
       progress(0.02, "Checking your groups…");
       const { chats, added } = await syncGroups();
       if (added) { await state.db.doc("config/chats").set({ chats }); state.chats = chats; }
@@ -487,7 +509,7 @@
       status.inProgress = false;
       await state.db.doc("meta/status").set(status);
       state.status = status;
-      banner(`Checked ${msgs.length} messages from ${jids.length} groups.` + (added ? ` ${added} new group${added > 1 ? "s" : ""} added — review them in Chats.` : ""));
+      banner(`Checked ${msgs.length} messages from ${jids.length} groups.` + (added ? ` ${added} new group${added > 1 ? "s" : ""} added — review them in Chats.` : "") + bridge.text, bridge.warn);
     } catch (e) {
       banner(explain(e), true);
     } finally {
