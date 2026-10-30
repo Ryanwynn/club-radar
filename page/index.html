@@ -294,7 +294,7 @@
       el("div", { class: "what" },
         el("div", { class: "title" }, r.item.title),
         el("div", { class: "meta" }, el("span", null, r.item.club), catTag(r), costTag(r), el("span", null, whenText(r.item)))),
-      el("div", { class: "scale" }, scale(r, false).childNodes, el("button", { type: "button", class: "skip", onclick: () => { state.skipped.add(r.item.id); render(); } }, "Skip for now")),
+      el("div", { class: "scale" }, [...scale(r, false).childNodes], el("button", { type: "button", class: "skip", onclick: () => { state.skipped.add(r.item.id); render(); } }, "Skip for now")),
       el("div", { class: "help" }, "5 warns you a week before a deadline and puts it first; 1 hides it under Not interested. Rating an event also rates its sign-up deadline."));
   }
 
