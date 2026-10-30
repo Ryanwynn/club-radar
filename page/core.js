@@ -216,11 +216,35 @@
   const validInterest = (n) => Number.isInteger(n) && n >= 1 && n <= 5;
 
   // {value, at} from the item's own rating, else from its linked event/deadline (same event); null when unrated.
+  const linkedTo = (item, o) => o !== item && o.id !== item.id &&
+    (item.kind === "deadline" && o.kind === "event" ? sameEvent(item, o) : item.kind === "event" && o.kind === "deadline" ? sameEvent(o, item) : false);
   function interestOf(item, items) {
     if (validInterest(item.interest)) return { value: item.interest, at: item.interestAt || null };
-    const linked = (items || []).find((o) => o !== item && o.id !== item.id && validInterest(o.interest) &&
-      (item.kind === "deadline" && o.kind === "event" ? sameEvent(item, o) : item.kind === "event" && o.kind === "deadline" ? sameEvent(o, item) : false));
+    const linked = (items || []).find((o) => validInterest(o.interest) && linkedTo(item, o));
     return linked ? { value: linked.interest, at: linked.interestAt || null } : null;
+  }
+
+  // Claude's guess (learned from the student's ratings), from the item or its linked event/deadline; null if none.
+  function guessOf(item, items) {
+    if (validInterest(item.guess)) return { value: item.guess, reason: item.guessReason || null };
+    const linked = (items || []).find((o) => validInterest(o.guess) && linkedTo(item, o));
+    return linked ? { value: linked.guess, reason: linked.guessReason || null } : null;
+  }
+
+  // Ratings the guesser learns from (most recent first) and the items it should guess for.
+  function ratingExamples(items, max = 60) {
+    return items.filter((x) => validInterest(x.interest))
+      .sort((a, b) => String(b.interestAt || "").localeCompare(String(a.interestAt || "")))
+      .slice(0, max)
+      .map((x) => ({ interest: x.interest, kind: x.kind, title: x.title, club: x.club, category: categoryOf(x, items), cost: costOf(x, items) }));
+  }
+  // Unrated, still-relevant items with no guess, or a guess made before the student's latest rating.
+  function guessTargets(items, now) {
+    const t = now.getTime();
+    const latest = items.reduce((m, x) => (validInterest(x.interest) && String(x.interestAt || "") > m ? String(x.interestAt) : m), "");
+    const stale = (x) => !validInterest(x.guess) || !x.guessAt || x.guessAt < latest;
+    return items.filter((x) => !x.dismissed && !interestOf(x, items) && stale(x) &&
+      (x.kind === "deadline" ? urgency(x, now) !== "hidden" : dueTime(x) == null || dueTime(x) >= t - DAY));
   }
 
   // Trips: sign-ups often close weeks or months before departure, so they're watched further out.
@@ -255,7 +279,7 @@
     return a.item.title.localeCompare(b.item.title);
   }
   const byRank = (a, b) => a.rank - b.rank;
-  const byInterest = (a, b) => (b.interest || 3) - (a.interest || 3);
+  const byInterest = (a, b) => (b.eff || 3) - (a.eff || 3);
 
   // Club priorities, saved as {order: [clubKey], hidden: [clubKey]}; a club key is normClub(name).
   function clubKey(name) {
@@ -318,21 +342,29 @@
       .map((item) => {
         const int = interestOf(item, items);
         const interest = int ? int.value : null;
-        // A 4–5 that a newer message changed since it was rated (or since "Got it").
-        const changed = !!int && interest >= 4 && !!int.at && !!item.updatedAt && Date.parse(item.updatedAt) > Date.parse(int.at);
-        return { item, mine: isMine(item, chats), due: dueTime(item), rank: clubRank(item, prefs), category: categoryOf(item, items), cost: costOf(item, items), interest, changed };
+        const g = int ? null : guessOf(item, items);
+        const guess = g ? g.value : null;
+        // eff orders the lists. warn sets the warning window: a guess can only make warnings earlier, never later,
+        // because a wrong low guess must not cost a deadline.
+        const eff = interest || guess || null;
+        const warn = interest || (guess ? Math.max(guess, 3) : null);
+        // A 4–5 that a newer message changed since it was rated (or since "Got it", which sets seenAt).
+        const seen = [int && int.at, item.seenAt].filter(Boolean).map(Date.parse);
+        const changed = !!int && interest >= 4 && seen.length > 0 && !!item.updatedAt && Date.parse(item.updatedAt) > Math.max(...seen);
+        return { item, mine: isMine(item, chats), due: dueTime(item), rank: clubRank(item, prefs), category: categoryOf(item, items), cost: costOf(item, items), interest, guess, guessReason: g && g.reason, eff, warn, changed };
       })
       .filter((r) => !category || category === "all" || r.category === category);
-    const live = (r) => (r.item.kind === "deadline" ? urgency(r.item, now, r.interest) !== "hidden" : r.due == null || r.due >= t - DAY);
+    const live = (r) => (r.item.kind === "deadline" ? urgency(r.item, now, r.warn) !== "hidden" : r.due == null || r.due >= t - DAY);
     const isTrip = (r) => r.category === "trip";
     const muted = rows.filter((r) => r.interest === 1 && live(r)).sort(byDueMineTitle);
     rows = rows.filter((r) => r.interest !== 1);
-    // Rating queue: unrated, still-relevant items; trips first (their sign-ups close early), then soonest.
-    const toRate = rows.filter((r) => r.interest == null && live(r)).sort((a, b) => isTrip(b) - isTrip(a) || byDueMineTitle(a, b));
+    // Rating queue: items you haven't rated (guessed ones included); trips first (their sign-ups close early),
+    // then what Claude guesses you care about most, then soonest.
+    const toRate = rows.filter((r) => r.interest == null && live(r)).sort((a, b) => isTrip(b) - isTrip(a) || byInterest(a, b) || byDueMineTitle(a, b));
 
     const actNow = rows
       .filter((r) => r.item.kind === "deadline")
-      .map((r) => ({ ...r, urgency: urgency(r.item, now, r.interest, { trip: isTrip(r) }) }))
+      .map((r) => ({ ...r, urgency: urgency(r.item, now, r.warn, { trip: isTrip(r) }) }))
       .filter((r) => r.urgency !== "hidden")
       .sort((a, b) => {
         const ta = a.due == null;
@@ -343,7 +375,7 @@
       });
 
     const events = rows.filter((r) => r.item.kind === "event" && (r.due == null || r.due >= t - DAY));
-    const horizon = (r) => t + (isTrip(r) && !(r.interest != null && r.interest <= 2) ? Math.max(TRIP_HORIZON, WINDOWS[r.interest || 3].horizon) : WINDOWS[r.interest || 3].horizon);
+    const horizon = (r) => t + (isTrip(r) && !(r.interest != null && r.interest <= 2) ? Math.max(TRIP_HORIZON, WINDOWS[r.warn || 3].horizon) : WINDOWS[r.warn || 3].horizon);
     const dayMap = new Map();
     const monthMap = new Map();
     for (const r of events.sort(byDueMineTitle)) {
@@ -502,7 +534,7 @@
     return { cgCost: cg.cost };
   }
 
-  const api = { WINDOWS, interestOf, costOf, campusGroupsCost, costFromCampusGroups, CATEGORIES, categoryOf, pageTitle, titleMatches, cutsOffEarly, isCgLink, findCgLink, parseCampusGroups, sameEvent, deadlineFromCampusGroups, signupDeadline, clubKey, clubList, parseEventPage, enrichFromPage, fillFromEvent, hasTime, openItems, safeResumeTs, normClub, normTitle, itemKey, dueTime, normalizeExtraction, mergeItems, isMine, urgency, buildView, staleness, localDate };
+  const api = { WINDOWS, interestOf, guessOf, ratingExamples, guessTargets, costOf, campusGroupsCost, costFromCampusGroups, CATEGORIES, categoryOf, pageTitle, titleMatches, cutsOffEarly, isCgLink, findCgLink, parseCampusGroups, sameEvent, deadlineFromCampusGroups, signupDeadline, clubKey, clubList, parseEventPage, enrichFromPage, fillFromEvent, hasTime, openItems, safeResumeTs, normClub, normTitle, itemKey, dueTime, normalizeExtraction, mergeItems, isMine, urgency, buildView, staleness, localDate };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.RadarCore = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

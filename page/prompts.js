@@ -104,7 +104,24 @@ ${lines.join("\n")}
 Reply with JSON only: {"chats": [{"jid": string, "include": boolean, "club": string | null}]} covering every group above.`;
   }
 
-  const api = { extraction, triage, categorize, suggestChats, ITEM_SHAPE, CATEGORIES };
+  // Quick-tier pass: guess how much the student will care (1–5) about unrated items, from the items they rated.
+  function guessInterest({ examples, items }) {
+    const row = (x) => [x.kind, x.title, x.club, x.category || "", x.cost || ""].map((v) => String(v || "").replace(/\|/g, "/")).join(" | ");
+    return `A student rates club events and deadlines from 1 to 5 for how much they care:
+1 not interested, 2 low, 3 maybe, 4 interested, 5 must do.
+
+Their ratings so far (rating | kind | title | club | category | cost):
+${examples.map((x) => `- ${x.interest} | ${row(x)}`).join("\n")}
+
+Guess their rating for each item below from the patterns in those ratings: which clubs, kinds of events (trips, talks, socials, recruiting), topics and price levels they rate high or low. Where the ratings give no signal for an item, answer 3. Keep the reason under 12 words and name the pattern (e.g. "You rated other Tech Club talks 4–5").
+
+ITEMS (id | kind | title | club | category | cost):
+${items.map((x) => `- ${x.id} | ${row(x)}`).join("\n")}
+
+Reply with JSON only: {"guesses": [{"id": string, "interest": 1 | 2 | 3 | 4 | 5, "reason": string}]} covering every item above.`;
+  }
+
+  const api = { extraction, triage, categorize, suggestChats, guessInterest, ITEM_SHAPE, CATEGORIES };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.RadarPrompts = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

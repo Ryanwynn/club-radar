@@ -392,3 +392,25 @@ test("toRate puts trips first", () => {
   const b = { id: "b", kind: "event", title: "Trek", club: "Y", when: "2027-01-05", approx: false, category: "trip" };
   assert.deepEqual(C.buildView([a, b], chats, NOW).toRate.map((r) => r.item.id), ["b", "a"]);
 });
+
+test("guesses order items but never delay a warning or hide an item", () => {
+  const low = item({ id: "low", title: "Low", when: "2026-10-24T12:00:00-04:00", guess: 1 }); // ~4 days out
+  const high = item({ id: "high", title: "High", when: "2026-10-24T13:00:00-04:00", guess: 5, guessReason: "trip" });
+  const v = C.buildView([low, high], chats, NOW);
+  assert.deepEqual(v.actNow.map((r) => [r.item.id, r.urgency]), [["high", "red"], ["low", "amber"]]); // a guessed 1 still warns like a 3
+  assert.equal(v.muted.length, 0);
+  assert.deepEqual(v.toRate.map((r) => r.item.id), ["high", "low"]);
+  assert.equal(v.actNow[0].guessReason, "trip");
+});
+
+test("your rating beats Claude's guess; targets skip rated and guessed items", () => {
+  const a = item({ id: "a", interest: 2, guess: 5 });
+  const v = C.buildView([a], chats, NOW);
+  assert.equal(v.actNow[0].eff, 2);
+  assert.equal(v.actNow[0].guess, null);
+  const b = item({ id: "b", title: "B", eventTitle: "B" }), c = item({ id: "c", title: "C", eventTitle: "C", guess: 3, guessAt: "2026-10-19T00:00:00Z" });
+  assert.deepEqual(C.guessTargets([{ ...a, interestAt: "2026-10-18T00:00:00Z" }, b, c], NOW).map((x) => x.id), ["b"]);
+  // A newer rating makes older guesses stale, so they're redone with the new example.
+  assert.deepEqual(C.guessTargets([{ ...a, interestAt: "2026-10-20T00:00:00Z" }, b, c], NOW).map((x) => x.id), ["b", "c"]);
+  assert.deepEqual(C.ratingExamples([a, b]).map((x) => x.interest), [2]);
+});

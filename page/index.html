@@ -148,6 +148,9 @@
   .interest { font-family: var(--font-data); font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); background: none; color: var(--muted); cursor: pointer; }
   .interest.i4, .interest.i5 { color: var(--accent); border-color: var(--accent); }
   .interest.unrated { border-style: dashed; }
+  .interest.guess { border-style: dashed; color: var(--accent); }
+  .scale button.guessed { border-color: var(--accent); border-style: dashed; }
+  .rate-card .guess-note { font-size: 13px; color: var(--accent); }
   .changed { font-size: 12px; font-weight: 600; color: var(--surface); background: var(--accent); border-radius: 6px; padding: 1px 7px; display: inline-flex; gap: 6px; align-items: center; }
   .changed button { font-size: 11px; padding: 0 6px; border-radius: 4px; background: none; color: var(--surface); border-color: var(--surface); }
   @media (max-width: 520px) {
@@ -256,14 +259,17 @@
   const SCALE = [[1, "Not interested"], [2, "Low"], [3, "Maybe"], [4, "Interested"], [5, "Must do"]];
   // The chip on each row: shows the rating (or "Rate") and opens the 1–5 picker in place.
   function interestTag(r) {
-    const n = r.interest;
-    return el("button", { type: "button", class: "interest" + (n ? " i" + n : " unrated"), "aria-expanded": String(state.picking === r.item.id),
-      title: n ? `You rated this ${n} of 5 (${SCALE[n - 1][1]}). Click to change.` : "How much do you care about this?",
-      onclick: () => { state.picking = state.picking === r.item.id ? null : r.item.id; render(); } }, n ? "★ " + n : "Rate");
+    const n = r.interest, g = r.guess;
+    const title = n ? `You rated this ${n} of 5 (${SCALE[n - 1][1]}). Click to change.`
+      : g ? `Claude's guess: ${g} of 5 (${SCALE[g - 1][1]})${r.guessReason ? ". " + r.guessReason : ""}. Click to rate it yourself.`
+      : "How much do you care about this?";
+    return el("button", { type: "button", class: "interest" + (n ? " i" + n : g ? " guess" : " unrated"), "aria-expanded": String(state.picking === r.item.id), title,
+      onclick: () => { state.picking = state.picking === r.item.id ? null : r.item.id; render(); } }, n ? "★ " + n : g ? "~" + g : "Rate");
   }
   function scale(r, compact) {
     return el("div", { class: "scale", role: "group", "aria-label": "How much do you care about " + r.item.title },
-      SCALE.map(([n, label]) => el("button", { type: "button", "aria-pressed": String(r.interest === n), title: label, onclick: () => setInterest(r.item.id, n) },
+      SCALE.map(([n, label]) => el("button", { type: "button", class: !r.interest && r.guess === n ? "guessed" : null, "aria-pressed": String(r.interest === n),
+        title: label + (!r.interest && r.guess === n ? " (Claude's guess)" : ""), onclick: () => setInterest(r.item.id, n) },
         String(n), !compact && el("small", null, label))));
   }
   const changedTag = (r) => r.changed && el("span", { class: "changed" }, "Updated",
@@ -273,15 +279,51 @@
     const prev = state.items.get(id);
     const now = new Date().toISOString();
     state.items.set(id, { ...prev, interest: n, interestAt: now }); state.picking = null; render();
-    try { await state.db.doc("items/" + id).update({ interest: n, interestAt: now }); }
+    try { await state.db.doc("items/" + id).update({ interest: n, interestAt: now }); scheduleGuess(); }
     catch (e) { state.items.set(id, prev); render(); banner("Couldn't save that rating: " + (e.message || e.code), true); }
   }
-  // "Got it" on an update: restamp the rating's time on whichever item carries it.
-  async function ackChange(id) {
+
+  // ---------- learning from ratings ----------
+  // After a burst of ratings (and at the end of each Refresh), Claude guesses ratings for the unrated items.
+  const MIN_EXAMPLES = 3;
+  let guessTimer = null;
+  function scheduleGuess() { clearTimeout(guessTimer); guessTimer = setTimeout(() => guessPass(), 15e3); }
+  async function guessPass(fromRefresh) {
+    if (state.guessing || !state.db || !state.sample) return;
+    if (state.busy && !fromRefresh) { scheduleGuess(); return; } // a Refresh is running; it guesses when it finishes
     const all = [...state.items.values()];
+    const examples = C.ratingExamples(all);
+    if (examples.length < MIN_EXAMPLES) return;
+    const targets = C.guessTargets(all, new Date());
+    if (!targets.length) return;
+    state.guessing = true;
+    try {
+      for (let i = 0; i < targets.length; i += 80) {
+        const chunk = targets.slice(i, i + 80);
+        const items = chunk.map((x) => ({ id: x.id, kind: x.kind, title: x.title, club: x.club, category: C.categoryOf(x, all), cost: C.costOf(x, all) }));
+        const res = await state.sample.json(P.guessInterest({ examples, items }), { modelTier: "quick" });
+        const at = new Date().toISOString();
+        for (const g of (res && res.guesses) || []) {
+          const n = Number(g.interest);
+          if (!Number.isInteger(n) || n < 1 || n > 5 || !state.items.has(g.id)) continue;
+          const cur = state.items.get(g.id);
+          if (Number.isInteger(cur.interest)) continue; // rated meanwhile: yours wins
+          const patch = { guess: n, guessReason: String(g.reason || "").slice(0, 120) || null, guessAt: at };
+          await state.db.doc("items/" + g.id).update(patch);
+          state.items.set(g.id, { ...cur, ...patch });
+        }
+        render();
+      }
+    } catch (_) {
+      // Guessing is a nicety; a failure leaves items unguessed until the next pass.
+    } finally { state.guessing = false; }
+  }
+  // "Got it" on an update: remember when this item was last seen, so only newer changes flag it again.
+  async function ackChange(id) {
     const it = state.items.get(id);
-    const src = Number.isInteger(it.interest) ? it : all.find((o) => o.interest === (C.interestOf(it, all) || {}).value && o.id !== id && (C.sameEvent(it, o) || C.sameEvent(o, it)));
-    if (src) await setInterest(src.id, src.interest);
+    const seenAt = new Date().toISOString();
+    state.items.set(id, { ...it, seenAt }); render();
+    try { await state.db.doc("items/" + id).update({ seenAt }); } catch (e) { banner("Couldn't save that: " + (e.message || e.code), true); }
   }
   function renderRateCard(v) {
     const card = $("rateCard");
@@ -294,8 +336,9 @@
       el("div", { class: "what" },
         el("div", { class: "title" }, r.item.title),
         el("div", { class: "meta" }, el("span", null, r.item.club), catTag(r), costTag(r), el("span", null, whenText(r.item)))),
+      r.guess && el("div", { class: "guess-note" }, `Claude guesses ${r.guess} (${SCALE[r.guess - 1][1]})` + (r.guessReason ? `: ${r.guessReason}` : "") + ". Tap a number to confirm or change it."),
       el("div", { class: "scale" }, [...scale(r, false).childNodes], el("button", { type: "button", class: "skip", onclick: () => { state.skipped.add(r.item.id); render(); } }, "Skip for now")),
-      el("div", { class: "help" }, "5 warns you a week before a deadline and puts it first; 1 hides it under Not interested. Rating an event also rates its sign-up deadline."));
+      el("div", { class: "help" }, `5 warns you a week before a deadline and puts it first; 1 hides it under Not interested. Rating an event also rates its sign-up deadline. After ${MIN_EXAMPLES} ratings, Claude starts guessing the rest from your answers; a guess can move an item up but never delays a warning.`));
   }
 
   // ---------- formatting ----------
@@ -583,6 +626,8 @@
       }
       if (msgs.length) status.lastScanTs = msgs[msgs.length - 1].ts;
       await categorizeMissing();
+      progress(0.98, "Guessing how much you'll care about new items…");
+      await guessPass(true);
       status.lastRunAt = new Date().toISOString();
       status.lastRunBy = "page";
       status.inProgress = false;
