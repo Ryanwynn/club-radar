@@ -93,6 +93,8 @@ cd ~/whatsapp-mcp/whatsapp-mcp-server && uv run --with pytest pytest -q test_rad
 
 The patch adds three read-only tools: `list_groups`, `list_group_messages` and `download_group_media` (used by the morning run for flyers). They only read your group messages, and they never return phone numbers. It also adds `bridge_status`, which Refresh uses to check the bridge is running, and `start_bridge`, which starts the background bridge from the optional step above if it's down (it never starts a second copy).
 
+The patch also locks down the bridge's local web API, which upstream leaves open to anyone on your network with no password (they could send WhatsApp messages as you). Patched, it answers only on this Mac and only to requests carrying a secret key it saves in `whatsapp-bridge/store/api-token`; the MCP server reads that key automatically. **Restart the bridge after applying the patch** (Ctrl+C and run it again, or `launchctl kickstart -k gui/$(id -u)/local.whatsapp-bridge` if it runs in the background; rebuild first with `go build -o whatsapp-bridge .` in that case).
+
 ## 3. Register the server with Claude
 
 Add this to your Claude desktop config (Claude → Settings → Developer → Edit Config). The name **must be `whatsapp`**:
