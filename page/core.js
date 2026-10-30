@@ -204,16 +204,46 @@
     return prevTs;
   }
 
-  function urgency(item, now) {
+  // How much the student cares (1–5) sets how early a deadline turns amber/red and how far ahead events show.
+  // Unrated items behave like a 3. A 1 drops out of the radar into a "Not interested" list.
+  const WINDOWS = {
+    5: { red: 7 * DAY, amber: 21 * DAY, horizon: 120 * DAY },
+    4: { red: 4 * DAY, amber: 14 * DAY, horizon: 120 * DAY },
+    3: { red: 48 * H, amber: 7 * DAY, horizon: 60 * DAY },
+    2: { red: 24 * H, amber: 3 * DAY, horizon: 60 * DAY },
+    1: { red: 24 * H, amber: 3 * DAY, horizon: 60 * DAY },
+  };
+  const validInterest = (n) => Number.isInteger(n) && n >= 1 && n <= 5;
+
+  // {value, at} from the item's own rating, else from its linked event/deadline (same event); null when unrated.
+  function interestOf(item, items) {
+    if (validInterest(item.interest)) return { value: item.interest, at: item.interestAt || null };
+    const linked = (items || []).find((o) => o !== item && o.id !== item.id && validInterest(o.interest) &&
+      (item.kind === "deadline" && o.kind === "event" ? sameEvent(item, o) : item.kind === "event" && o.kind === "deadline" ? sameEvent(o, item) : false));
+    return linked ? { value: linked.interest, at: linked.interestAt || null } : null;
+  }
+
+  // Trips: sign-ups often close weeks or months before departure, so they're watched further out.
+  const TRIP_HORIZON = 180 * DAY;
+  const TRIP_SIGNUP_RED = 42 * DAY;   // no cutoff posted: red from ~6 weeks before the trip
+  const TRIP_SIGNUP_AMBER = 90 * DAY; // and amber from ~3 months before
+
+  function urgency(item, now, interest, opts) {
     const due = dueTime(item);
     if (due == null) return "grey";
     const diff = due - now.getTime();
     if (diff < -DAY) return "hidden";
     if (diff < 0) return "missed";
+    const w = WINDOWS[validInterest(interest) ? interest : 3];
+    if (item.beforeEvent && opts && opts.trip) {
+      if (diff < w.red + TRIP_SIGNUP_RED) return "red";
+      if (diff < Math.max(w.amber + TRIP_SIGNUP_RED, TRIP_SIGNUP_AMBER)) return "amber";
+      return "grey";
+    }
     // No sign-up cutoff was posted, so it may close days before the event: flag it early.
     const pad = item.beforeEvent ? 2 * DAY : 0;
-    if (diff < 48 * H + pad) return "red";
-    if (diff < 7 * DAY + pad) return "amber";
+    if (diff < w.red + pad) return "red";
+    if (diff < w.amber + pad) return "amber";
     return "grey";
   }
 
@@ -225,6 +255,7 @@
     return a.item.title.localeCompare(b.item.title);
   }
   const byRank = (a, b) => a.rank - b.rank;
+  const byInterest = (a, b) => (b.interest || 3) - (a.interest || 3);
 
   // Club priorities, saved as {order: [clubKey], hidden: [clubKey]}; a club key is normClub(name).
   function clubKey(name) {
@@ -282,29 +313,41 @@
   // category: "all" (default) or one of CATEGORIES; uncategorized items show only under "all".
   function buildView(items, chats, now, prefs, category) {
     const t = now.getTime();
-    const rows = items
+    let rows = items
       .filter((x) => !x.dismissed && !clubHidden(x, prefs))
-      .map((item) => ({ item, mine: isMine(item, chats), due: dueTime(item), rank: clubRank(item, prefs), category: categoryOf(item, items), cost: costOf(item, items) }))
+      .map((item) => {
+        const int = interestOf(item, items);
+        const interest = int ? int.value : null;
+        // A 4–5 that a newer message changed since it was rated (or since "Got it").
+        const changed = !!int && interest >= 4 && !!int.at && !!item.updatedAt && Date.parse(item.updatedAt) > Date.parse(int.at);
+        return { item, mine: isMine(item, chats), due: dueTime(item), rank: clubRank(item, prefs), category: categoryOf(item, items), cost: costOf(item, items), interest, changed };
+      })
       .filter((r) => !category || category === "all" || r.category === category);
+    const live = (r) => (r.item.kind === "deadline" ? urgency(r.item, now, r.interest) !== "hidden" : r.due == null || r.due >= t - DAY);
+    const isTrip = (r) => r.category === "trip";
+    const muted = rows.filter((r) => r.interest === 1 && live(r)).sort(byDueMineTitle);
+    rows = rows.filter((r) => r.interest !== 1);
+    // Rating queue: unrated, still-relevant items; trips first (their sign-ups close early), then soonest.
+    const toRate = rows.filter((r) => r.interest == null && live(r)).sort((a, b) => isTrip(b) - isTrip(a) || byDueMineTitle(a, b));
 
     const actNow = rows
       .filter((r) => r.item.kind === "deadline")
-      .map((r) => ({ ...r, urgency: urgency(r.item, now) }))
+      .map((r) => ({ ...r, urgency: urgency(r.item, now, r.interest, { trip: isTrip(r) }) }))
       .filter((r) => r.urgency !== "hidden")
       .sort((a, b) => {
         const ta = a.due == null;
         const tb = b.due == null;
         if (ta !== tb) return ta ? 1 : -1;
-        // Within an urgency band, higher-priority clubs first.
-        return BAND[a.urgency] - BAND[b.urgency] || byRank(a, b) || byDueMineTitle(a, b);
+        // Within an urgency band, what the student cares about most first, then higher-priority clubs.
+        return BAND[a.urgency] - BAND[b.urgency] || byInterest(a, b) || byRank(a, b) || byDueMineTitle(a, b);
       });
 
     const events = rows.filter((r) => r.item.kind === "event" && (r.due == null || r.due >= t - DAY));
-    const horizon = t + 60 * DAY;
+    const horizon = (r) => t + (isTrip(r) && !(r.interest != null && r.interest <= 2) ? Math.max(TRIP_HORIZON, WINDOWS[r.interest || 3].horizon) : WINDOWS[r.interest || 3].horizon);
     const dayMap = new Map();
     const monthMap = new Map();
     for (const r of events.sort(byDueMineTitle)) {
-      if (r.due != null && r.due <= horizon && !r.item.approx) {
+      if (r.due != null && r.due <= horizon(r) && !r.item.approx) {
         const k = localDate(r.due);
         if (!dayMap.has(k)) dayMap.set(k, []);
         dayMap.get(k).push(r);
@@ -315,10 +358,13 @@
       }
     }
     const sortKeys = (m) => [...m.keys()].sort((a, b) => (a === "TBD") - (b === "TBD") || a.localeCompare(b));
+    const order = (a, b) => byInterest(a, b) || byRank(a, b) || byDueMineTitle(a, b);
     return {
       actNow,
-      days: sortKeys(dayMap).map((date) => ({ date, items: dayMap.get(date).sort((a, b) => byRank(a, b) || byDueMineTitle(a, b)) })),
-      later: sortKeys(monthMap).map((month) => ({ month, items: monthMap.get(month).sort((a, b) => byRank(a, b) || byDueMineTitle(a, b)) })),
+      days: sortKeys(dayMap).map((date) => ({ date, items: dayMap.get(date).sort(order) })),
+      later: sortKeys(monthMap).map((month) => ({ month, items: monthMap.get(month).sort(order) })),
+      muted,
+      toRate,
     };
   }
 
@@ -456,7 +502,7 @@
     return { cgCost: cg.cost };
   }
 
-  const api = { costOf, campusGroupsCost, costFromCampusGroups, CATEGORIES, categoryOf, pageTitle, titleMatches, cutsOffEarly, isCgLink, findCgLink, parseCampusGroups, sameEvent, deadlineFromCampusGroups, signupDeadline, clubKey, clubList, parseEventPage, enrichFromPage, fillFromEvent, hasTime, openItems, safeResumeTs, normClub, normTitle, itemKey, dueTime, normalizeExtraction, mergeItems, isMine, urgency, buildView, staleness, localDate };
+  const api = { WINDOWS, interestOf, costOf, campusGroupsCost, costFromCampusGroups, CATEGORIES, categoryOf, pageTitle, titleMatches, cutsOffEarly, isCgLink, findCgLink, parseCampusGroups, sameEvent, deadlineFromCampusGroups, signupDeadline, clubKey, clubList, parseEventPage, enrichFromPage, fillFromEvent, hasTime, openItems, safeResumeTs, normClub, normTitle, itemKey, dueTime, normalizeExtraction, mergeItems, isMine, urgency, buildView, staleness, localDate };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.RadarCore = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

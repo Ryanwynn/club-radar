@@ -337,3 +337,58 @@ test("cost: CampusGroups ticket table, message price, deadline shows its event's
   const [after] = C.mergeItems([cg], [repost], "t1").upserts;
   assert.equal(C.costOf(after, [after]), "$85 · CampusGroups: Member $80 · Guest $95");
 });
+
+test("interest widens or narrows the warning window", () => {
+  const dl = item({ when: "2026-10-25T12:00:00-04:00" }); // 5 days out
+  assert.equal(C.urgency(dl, NOW), "amber");
+  assert.equal(C.urgency(dl, NOW, 3), "amber");
+  assert.equal(C.urgency(dl, NOW, 5), "red");
+  assert.equal(C.urgency(dl, NOW, 2), "grey");
+  const far = item({ when: "2026-11-05T12:00:00-05:00" }); // ~16 days out
+  assert.equal(C.urgency(far, NOW, 5), "amber");
+  assert.equal(C.urgency(far, NOW), "grey");
+});
+
+test("interestOf: own rating wins, else the linked event or deadline's", () => {
+  const ev = { id: "e", kind: "event", title: "SF Trek", club: "Wharton Tech Club", when: "2026-10-28", interest: 5, interestAt: "2026-10-19T00:00:00Z" };
+  const dl = item({ id: "d", eventTitle: "SF Trek" });
+  assert.deepEqual(C.interestOf(dl, [ev, dl]), { value: 5, at: "2026-10-19T00:00:00Z" });
+  assert.equal(C.interestOf({ ...dl, interest: 2 }, [ev, dl]).value, 2);
+  assert.equal(C.interestOf({ ...ev, interest: undefined }, [{ ...dl, interest: 4 }]).value, 4);
+  assert.equal(C.interestOf(item({ id: "x", eventTitle: "Other" }), [ev]), null);
+});
+
+test("buildView: higher interest first within a band; 1s go to muted; unrated go to toRate", () => {
+  const a = item({ id: "a", title: "A", when: "2026-10-21T10:00:00-04:00" });
+  const b = item({ id: "b", title: "B", when: "2026-10-21T20:00:00-04:00", interest: 5 });
+  const c = item({ id: "c", title: "C", when: "2026-10-21T21:00:00-04:00", interest: 1 });
+  const v = C.buildView([a, b, c], chats, NOW);
+  assert.deepEqual(v.actNow.map((r) => r.item.id), ["b", "a"]);
+  assert.deepEqual(v.muted.map((r) => r.item.id), ["c"]);
+  assert.deepEqual(v.toRate.map((r) => r.item.id), ["a"]);
+});
+
+test("buildView: 4–5 events show up to 120 days ahead; flagged when changed after rating", () => {
+  const ev = (over) => ({ kind: "event", title: "Trek", club: "X", when: "2027-01-10", approx: false, ...over });
+  const v = C.buildView([ev({ id: "p" }), ev({ id: "q", title: "Q", interest: 5, interestAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-18T00:00:00Z" })], chats, NOW);
+  assert.deepEqual(v.days.flatMap((d) => d.items.map((r) => r.item.id)), ["q"]);
+  assert.equal(v.days[0].items[0].changed, true);
+  assert.deepEqual(v.later.flatMap((m) => m.items.map((r) => r.item.id)), ["p"]);
+});
+
+test("trips: watched 180 days out; no-cutoff sign-ups warn months ahead", () => {
+  const trek = { id: "t", kind: "event", title: "Ghana Trek", club: "WASA", when: "2027-03-20", approx: false, category: "trip" };
+  const party = { id: "p", kind: "event", title: "Party", club: "X", when: "2027-03-20", approx: false, category: "social" };
+  const v = C.buildView([trek, party, { ...trek, id: "t2", title: "Low", interest: 2 }], chats, NOW);
+  assert.deepEqual(v.days.flatMap((d) => d.items.map((r) => r.item.id)), ["t"]);
+  const signup = item({ when: "2026-12-27", beforeEvent: true, eventTitle: "Ghana Trek" }); // ~68 days out
+  assert.equal(C.urgency(signup, NOW, null, { trip: true }), "amber");
+  assert.equal(C.urgency(signup, NOW), "grey");
+  assert.equal(C.urgency(item({ when: "2026-11-25", beforeEvent: true }), NOW, null, { trip: true }), "red");
+});
+
+test("toRate puts trips first", () => {
+  const a = item({ id: "a", title: "Soon", when: "2026-10-21T10:00:00-04:00", category: "social" });
+  const b = { id: "b", kind: "event", title: "Trek", club: "Y", when: "2027-01-05", approx: false, category: "trip" };
+  assert.deepEqual(C.buildView([a, b], chats, NOW).toRate.map((r) => r.item.id), ["b", "a"]);
+});

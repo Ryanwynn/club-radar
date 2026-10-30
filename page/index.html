@@ -131,6 +131,25 @@
   .badge { font-size: 11px; color: var(--amber); font-weight: 600; margin-left: 6px; }
   .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 10px; display: flex; gap: 12px; align-items: center; font-size: 14px; max-width: calc(100% - 32px); }
   .toast button { background: transparent; color: var(--bg); border-color: var(--bg); padding: 2px 10px; }
+  /* interest (1–5) */
+  .rate-card { background: var(--surface); border: 1px solid var(--accent); border-radius: 12px; padding: 14px 16px; display: grid; gap: 10px; }
+  .rate-card .q { font-family: var(--font-display); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); display: flex; justify-content: space-between; gap: 8px; }
+  .rate-card .q .count { font-family: var(--font-data); letter-spacing: 0; color: var(--muted); text-transform: none; }
+  .rate-card .what { display: grid; gap: 2px; }
+  .rate-card .help { font-size: 13px; color: var(--muted); }
+  .scale { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .scale button { display: grid; justify-items: center; gap: 0; padding: 6px 10px; min-width: 64px; font-weight: 600; line-height: 1.15; }
+  .scale button small { font-weight: 400; font-size: 11px; color: var(--muted); }
+  .scale button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+  .scale button[aria-pressed="true"] small { color: var(--surface); }
+  .scale .skip { min-width: 0; background: none; border-color: transparent; color: var(--muted); font-weight: 500; }
+  .row .scale, .event .scale { grid-column: 2 / -1; }
+  .row .scale button, .event .scale button { min-width: 0; padding: 3px 9px; font-size: 13px; }
+  .interest { font-family: var(--font-data); font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); background: none; color: var(--muted); cursor: pointer; }
+  .interest.i4, .interest.i5 { color: var(--accent); border-color: var(--accent); }
+  .interest.unrated { border-style: dashed; }
+  .changed { font-size: 12px; font-weight: 600; color: var(--surface); background: var(--accent); border-radius: 6px; padding: 1px 7px; display: inline-flex; gap: 6px; align-items: center; }
+  .changed button { font-size: 11px; padding: 0 6px; border-radius: 4px; background: none; color: var(--surface); border-color: var(--surface); }
   @media (max-width: 520px) {
     .row { grid-template-columns: 78px minmax(0, 1fr); }
     .row .actions { grid-column: 2; justify-content: flex-start; }
@@ -188,17 +207,22 @@
       <button type="button" data-cat="professional">Professional</button>
       <button type="button" data-cat="trip">Trips &amp; treks</button>
     </div>
+    <section id="rateCard" class="rate-card" hidden aria-live="polite"></section>
     <section>
       <h2>Act now <span id="actCount" class="count"></span></h2>
       <div id="actList" class="list"></div>
     </section>
     <section>
-      <h2>Upcoming events <span class="count note">next 60 days</span></h2>
+      <h2>Upcoming events <span class="count note">next 60 days · trips and 4–5s further</span></h2>
       <div id="dayList" class="list"></div>
     </section>
     <details class="later" id="laterWrap" hidden>
       <summary><h2>Later <span id="laterCount" class="count"></span></h2></summary>
       <div id="laterList" class="list"></div>
+    </details>
+    <details class="later" id="mutedWrap" hidden>
+      <summary><h2>Not interested <span id="mutedCount" class="count"></span></h2></summary>
+      <div id="mutedList" class="list"></div>
     </details>
   </main>
 </div>
@@ -215,7 +239,7 @@
   const $ = (id) => document.getElementById(id);
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  const state = { items: new Map(), chats: null, status: null, db: null, mcp: null, sample: null, host: false, busy: false, draftChats: null, setupMode: false, prefs: { order: [], hidden: [] }, tab: "radar", category: loadCategory() };
+  const state = { items: new Map(), chats: null, status: null, db: null, mcp: null, sample: null, host: false, busy: false, draftChats: null, setupMode: false, prefs: { order: [], hidden: [] }, tab: "radar", category: loadCategory(), skipped: new Set(), picking: null };
 
   // The chosen filter is a per-viewer convenience.
   function loadCategory() { try { return localStorage.getItem("radar.category") || "all"; } catch (_) { return "all"; } }
@@ -227,6 +251,52 @@
   const CAT_LABEL = { social: "Social", professional: "Professional", trip: "Trip" };
   const catTag = (r) => r.category && el("span", { class: "cat" }, CAT_LABEL[r.category]);
   const costTag = (r) => r.cost && el("span", { class: "cost" }, r.cost);
+
+  // ---------- interest (1–5) ----------
+  const SCALE = [[1, "Not interested"], [2, "Low"], [3, "Maybe"], [4, "Interested"], [5, "Must do"]];
+  // The chip on each row: shows the rating (or "Rate") and opens the 1–5 picker in place.
+  function interestTag(r) {
+    const n = r.interest;
+    return el("button", { type: "button", class: "interest" + (n ? " i" + n : " unrated"), "aria-expanded": String(state.picking === r.item.id),
+      title: n ? `You rated this ${n} of 5 (${SCALE[n - 1][1]}). Click to change.` : "How much do you care about this?",
+      onclick: () => { state.picking = state.picking === r.item.id ? null : r.item.id; render(); } }, n ? "★ " + n : "Rate");
+  }
+  function scale(r, compact) {
+    return el("div", { class: "scale", role: "group", "aria-label": "How much do you care about " + r.item.title },
+      SCALE.map(([n, label]) => el("button", { type: "button", "aria-pressed": String(r.interest === n), title: label, onclick: () => setInterest(r.item.id, n) },
+        String(n), !compact && el("small", null, label))));
+  }
+  const changedTag = (r) => r.changed && el("span", { class: "changed" }, "Updated",
+    el("button", { type: "button", "aria-label": "Mark the update to " + r.item.title + " as seen", onclick: () => ackChange(r.item.id) }, "Got it"));
+  async function setInterest(id, n) {
+    if (!state.db) return;
+    const prev = state.items.get(id);
+    const now = new Date().toISOString();
+    state.items.set(id, { ...prev, interest: n, interestAt: now }); state.picking = null; render();
+    try { await state.db.doc("items/" + id).update({ interest: n, interestAt: now }); }
+    catch (e) { state.items.set(id, prev); render(); banner("Couldn't save that rating: " + (e.message || e.code), true); }
+  }
+  // "Got it" on an update: restamp the rating's time on whichever item carries it.
+  async function ackChange(id) {
+    const all = [...state.items.values()];
+    const it = state.items.get(id);
+    const src = Number.isInteger(it.interest) ? it : all.find((o) => o.interest === (C.interestOf(it, all) || {}).value && o.id !== id && (C.sameEvent(it, o) || C.sameEvent(o, it)));
+    if (src) await setInterest(src.id, src.interest);
+  }
+  function renderRateCard(v) {
+    const card = $("rateCard");
+    const queue = v.toRate.filter((r) => !state.skipped.has(r.item.id));
+    card.hidden = !queue.length || !state.db;
+    if (card.hidden) return;
+    const r = queue[0];
+    card.replaceChildren(
+      el("div", { class: "q" }, "How much do you care about this?", el("span", { class: "count" }, `${queue.length} to rate`)),
+      el("div", { class: "what" },
+        el("div", { class: "title" }, r.item.title),
+        el("div", { class: "meta" }, el("span", null, r.item.club), catTag(r), costTag(r), el("span", null, whenText(r.item)))),
+      el("div", { class: "scale" }, scale(r, false).childNodes, el("button", { type: "button", class: "skip", onclick: () => { state.skipped.add(r.item.id); render(); } }, "Skip for now")),
+      el("div", { class: "help" }, "5 warns you a week before a deadline and puts it first; 1 hides it under Not interested. Rating an event also rates its sign-up deadline."));
+  }
 
   // ---------- formatting ----------
   const fmtDay = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -281,6 +351,12 @@
       b.replaceChildren(b.dataset.label || (b.dataset.label = b.textContent), el("span", { class: "n" }, n));
     }
     if (state.tab === "clubs") renderClubs();
+    renderRateCard(v);
+
+    const muted = $("mutedList"); muted.replaceChildren();
+    $("mutedWrap").hidden = !v.muted.length;
+    $("mutedCount").textContent = v.muted.length ? String(v.muted.length) : "";
+    if (v.muted.length) muted.append(el("div", { class: "day" }, el("div", { class: "dayname" }, "Rated 1"), el("div", { class: "events" }, v.muted.map(eventBlock))));
 
     const act = $("actList"); act.replaceChildren();
     $("actCount").textContent = v.actNow.length ? String(v.actNow.length) : "";
@@ -292,10 +368,11 @@
         el("div", { class: "due " + r.urgency, title: whenText(r.item) }, big, el("small", null, r.urgency === "missed" ? "missed" : small)),
         el("div", null,
           el("div", { class: "title" }, r.item.title),
-          el("div", { class: "meta" }, tagFor(r.mine), el("span", null, r.item.club), catTag(r), costTag(r), el("span", null, whenText(r.item)), forEvent && el("span", null, forEvent),
+          el("div", { class: "meta" }, interestTag(r), changedTag(r), tagFor(r.mine), el("span", null, r.item.club), catTag(r), costTag(r), el("span", null, whenText(r.item)), forEvent && el("span", null, forEvent),
             r.item.deadlineFrom === "campusgroups" && el("span", { class: "verified" }, "✓ from CampusGroups" + (r.item.spotsLeft != null ? ` · ${r.item.spotsLeft} spot${r.item.spotsLeft === 1 ? "" : "s"} left` : ""))),
-          deadlineWarning(r.item) && el("div", { class: "warn" }, deadlineWarning(r.item))),
+          deadlineWarning(r.item, r.category) && el("div", { class: "warn" }, deadlineWarning(r.item, r.category))),
         rowActions(r.item),
+        state.picking === r.item.id && scale(r, true),
         sourceDetails(r.item)));
     }
 
@@ -330,15 +407,17 @@
   function eventBlock(r) {
     return el("div", { class: "event" },
       el("div", { class: "title" }, r.item.title),
-      el("div", { class: "meta" }, tagFor(r.mine), el("span", null, r.item.club), catTag(r), costTag(r),
+      el("div", { class: "meta" }, interestTag(r), changedTag(r), tagFor(r.mine), el("span", null, r.item.club), catTag(r), costTag(r),
         r.item.when && !isDateOnly(r.item.when) && el("span", null, fmtTime.format(C.dueTime(r.item))),
         linkButtons(r.item, "Details ↗"),
         el("button", { type: "button", onclick: () => dismiss(r.item.id) }, "Hide")),
+      state.picking === r.item.id && scale(r, true),
       sourceDetails(r.item));
   }
   // The posted date may only be the event's day; the real sign-up cutoff can be earlier.
-  function deadlineWarning(item) {
+  function deadlineWarning(item, category) {
     if (item.deadlineFrom === "campusgroups" || item.approx || !item.when) return null;
+    if (item.beforeEvent && category === "trip") return "No sign-up deadline was posted. Trek sign-ups often close weeks or months before the trip, so it's flagged early: book soon" + (item.cgLink ? " or check CampusGroups." : ".");
     if (item.beforeEvent) return "No sign-up deadline was posted. It may close before the event: sign up early" + (item.cgLink ? " or check CampusGroups." : ".");
     if (item.eventWhen && C.localDate(C.dueTime(item)) === C.localDate(C.dueTime({ kind: "event", when: item.eventWhen }))) return "Deadline posted as the event's day. Sign-up may close sooner" + (item.cgLink ? ": check CampusGroups." : ".");
     return null;
@@ -362,7 +441,7 @@
             canRun() ? el("button", { type: "button", class: "primary", onclick: startSetup }, "Set up") : el("span", { class: "note" }, "Open this page in the Claude app on your Mac to set it up."))
         : el("div", { class: "empty" }, "Events appear here after the first scan.");
     }
-    return el("div", { class: "empty" }, which === "act" ? "Nothing to act on right now." : "No events in the next 60 days.");
+    return el("div", { class: "empty" }, which === "act" ? "Nothing to act on right now." : "No upcoming events.");
   }
   function ago(iso) {
     const s = (Date.now() - Date.parse(iso)) / 1000;
